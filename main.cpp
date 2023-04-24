@@ -156,7 +156,15 @@ int main()
 	std::copy(vertex_.begin(), vertex_.end(), mapped);
 	vertexBuffer->UnMap();
 
+	// インデックスバッファとビュー作成
 	std::unique_ptr<Eugene::BufferResource> indexBuffer;
+	std::unique_ptr<Eugene::IndexView> indexView;
+	indexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(index[0]) * index.size()));
+	indexView.reset(graphics->CreateIndexView(sizeof(index[0]) * index.size(), Eugene::Format::R16_UINT, *indexBuffer));
+	std::uint16_t* indexMap = reinterpret_cast<std::uint16_t*>(indexBuffer->Map());
+	std::copy(index.begin(), index.end(), indexMap);
+	indexBuffer->UnMap();
+
 
 
 	float color[]{ 1.0f, 0.0f, 0.0f,1.0f };
