@@ -106,10 +106,57 @@ int main()
 	std::unique_ptr<Eugene::CommandList> cmdList;
 	cmdList.reset(graphics->CreateCommandList());
 
+	std::unique_ptr<Eugene::GraphicsPipeline> pipeline;
+	// 頂点シェーダの入力のレイアウト
+	std::vector<Eugene::ShaderInputLayout> layout
+	{
+		{ "POSITION", 0, Eugene::Format::R32G32_FLOAT }
+	};
+
+	// シェーダー
+	std::vector<std::pair<Eugene::Shader, Eugene::ShaderType>> shaders
+	{
+		{ Eugene::Shader{ "./Asset/vs.vso" }, Eugene::ShaderType::Vertex },
+		{ Eugene::Shader{ "./Asset/ps.pso" }, Eugene::ShaderType::Pixel }
+	};
+
+	// レンダーターゲット
+	std::vector<Eugene::RendertargetLayout> rendertargets
+	{
+		{ Eugene::Format::R8G8B8A8_UNORM, Eugene::BlendType::Non }
+	};
+
+	std::vector<std::vector<Eugene::ShaderLayout>> shaderLayout
+	{
+		{ Eugene::ShaderLayout{ Eugene::ViewType::ConstantBuffer, 2,0 } }
+	};
+
+	pipeline.reset(
+		graphics->CreateGraphicsPipeline(
+			layout,
+			shaders,
+			rendertargets,
+			Eugene::TopologyType::Triangle,
+			false, false,
+			shaderLayout
+		));
+
+
 	std::vector<GltfVertex> vertex_;
 	std::vector<std::uint16_t> index;
-	
+
 	LoadGltf(vertex_, index, "untitled.gltf");
+
+	// 頂点バッファとビュー作成
+	std::unique_ptr<Eugene::BufferResource> vertexBuffer;
+	std::unique_ptr<Eugene::VertexView> vertexView;
+	vertexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(GltfVertex) * vertex_.size()));
+	vertexView.reset(graphics->CreateVertexView(sizeof(GltfVertex), vertex_.size(), *vertexBuffer));
+	GltfVertex* mapped = reinterpret_cast<GltfVertex*>(vertexBuffer->Map());
+	std::copy(vertex_.begin(), vertex_.end(), mapped);
+	vertexBuffer->UnMap();
+
+	std::unique_ptr<Eugene::BufferResource> indexBuffer;
 
 
 	float color[]{ 1.0f, 0.0f, 0.0f,1.0f };
