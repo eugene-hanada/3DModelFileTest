@@ -1,0 +1,6 @@
+[submodule "tinygltf"]
+	path = tinygltf
+	url = https://github.com/syoyo/tinygltf.git
+[submodule "EugeneLib"]
+	path = EugeneLib
+	url = https://github.com/eugene-hanada/EugeneLib.git
