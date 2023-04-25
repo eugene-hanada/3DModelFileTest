@@ -19,6 +19,8 @@ struct GltfVertex
 	Eugene::Vector3 pos;
 	Eugene::Vector3 normal;
 	Eugene::Vector2 uv;
+	std::uint16_t joint[4];
+	float weight[4];
 };
 
 struct Camera
@@ -26,6 +28,8 @@ struct Camera
 	Eugene::Matrix4x4 view;
 	Eugene::Matrix4x4 projection;
 };
+
+
 
 
 void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIndex, const std::string& path)
@@ -36,6 +40,7 @@ void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIn
 	std::string warn;
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
 
+	std::vector<std::uint8_t> joints;
 
 	for (auto& mesh : model.meshes)
 	{
@@ -44,28 +49,45 @@ void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIn
 			auto& posAccsessor = model.accessors[primitive.attributes["POSITION"]];
 			auto& normAccessor = model.accessors[primitive.attributes["NORMAL"]];
 			auto& uvAccessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
+			auto& boneAccessor = model.accessors[primitive.attributes["JOINTS_0"]];
+			auto& weighisAccessor = model.accessors[primitive.attributes["WEIGHIS_0"]];
 
 			auto& posBufferView = model.bufferViews[posAccsessor.bufferView];
 			auto& normBufferView = model.bufferViews[normAccessor.bufferView];
 			auto& uvBufferView = model.bufferViews[uvAccessor.bufferView];
+			auto& boneBufferView = model.bufferViews[boneAccessor.bufferView];
+			auto& weighisBufferView = model.bufferViews[weighisAccessor.bufferView];
 
 			auto& posBuffer = model.buffers[posBufferView.buffer];
 			auto& normBuffer = model.buffers[normBufferView.buffer];
 			auto& uvBuffer = model.buffers[uvBufferView.buffer];
-
+			auto& boneBuffer = model.buffers[boneBufferView.buffer];
+			auto& weighisBuffer = model.buffers[weighisBufferView.buffer];
 
 			auto pos = reinterpret_cast<float*>(&posBuffer.data[posBufferView.byteOffset + posAccsessor.byteOffset]);
 			auto norm = reinterpret_cast<float*>(&normBuffer.data[normBufferView.byteOffset + normAccessor.byteOffset]);
 			auto uv = reinterpret_cast<float*>(&uvBuffer.data[uvBufferView.byteOffset + uvAccessor.byteOffset]);
+			auto joint = reinterpret_cast<std::uint8_t*>(&boneBuffer.data[boneBufferView.byteOffset + boneAccessor.byteOffset]);
+			auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weighisBufferView.byteOffset + weighisAccessor.byteOffset]);
+
+			
 
 			output.resize(posAccsessor.count);
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
-				output[i] = GltfVertex{
-					Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] } ,
-					Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] },
-					Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] }
-				};
+				std::uint8_t j[4];
+				output[i].pos = Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] };
+				output[i].normal = Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
+				output[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
+				output[i].joint[0] = joint[i * 4 + 0];
+				output[i].joint[1] = joint[i * 4 + 1];
+				output[i].joint[2] = joint[i * 4 + 2];
+				output[i].joint[3] = joint[i * 4 + 3];
+				
+				output[i].weight[0] = weight[i * 4 + 0];
+				output[i].weight[1] = weight[i * 4 + 1];
+				output[i].weight[2] = weight[i * 4 + 2];
+				output[i].weight[3] = weight[i * 4 + 3];
 			}
 
 			auto& accessor = model.accessors[primitive.indices];
@@ -105,7 +127,9 @@ int main()
 	{
 		{ "POSITION", 0, Eugene::Format::R32G32B32_FLOAT },
 		{ "NORMAL", 0, Eugene::Format::R32G32B32_FLOAT },
-		{ "TEXCOORD", 0, Eugene::Format::R32G32_FLOAT }
+		{ "TEXCOORD", 0, Eugene::Format::R32G32_FLOAT },
+		{ "BONE_NO", 0, Eugene::Format::R16G16B16A16_UINT},
+		{ "WEIGHT", 0, Eugene::Format::R32G32B32A32_FLOAT}
 	};
 
 	// シェーダー
@@ -126,15 +150,24 @@ int main()
 		{ Eugene::ShaderLayout{ Eugene::ViewType::ConstantBuffer, 1,0 } }
 	};
 
-	pipeline.reset(
-		graphics->CreateGraphicsPipeline(
-			layout,
-			shaders,
-			rendertargets,
-			Eugene::TopologyType::Triangle,
-			false, false,
-			shaderLayout
-		));
+	try
+	{
+		pipeline.reset(
+			graphics->CreateGraphicsPipeline(
+				layout,
+				shaders,
+				rendertargets,
+				Eugene::TopologyType::Triangle,
+				false, false,
+				shaderLayout
+			));
+	}
+	catch (const std::exception& t)
+	{
+		return 0;
+	}
+
+	
 
 
 	std::vector<GltfVertex> vertex_;

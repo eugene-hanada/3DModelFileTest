@@ -4,6 +4,8 @@ struct VertexInput
 	float4 pos : POSITION;
 	float4 normal : NORMAL;
 	float2 uv : TEXCOORD;
+	min16uint4 bone : BONE_NO;
+	float4 weight : WEIGHT;
 };
 
 struct VertexOutput
