@@ -4,6 +4,10 @@
 #include <deque>
 #include <EugeneLib.h>
 
+#include "EugeneLib/Include/Graphics/IndexView.h"
+
+#include "EugeneLib/Include/Math/Geometry.h"
+
 #define __STDC_LIB_EXT1__
 #define TINYGLTF_IMPLEMENTATION
 //#define STB_IMAGE_IMPLEMENTATION
@@ -17,6 +21,12 @@ struct GltfVertex
 	Eugene::Vector2 uv;
 };
 
+struct Camera
+{
+	Eugene::Matrix4x4 view;
+	Eugene::Matrix4x4 projection;
+};
+
 
 void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIndex, const std::string& path)
 {
@@ -26,67 +36,50 @@ void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIn
 	std::string warn;
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
 
-	std::deque<Eugene::Vector3> posList;
-	std::deque<Eugene::Vector3> normalList;
-	std::deque<Eugene::Vector2> uvList;
-	std::deque<std::uint16_t> index_;
 
 	for (auto& mesh : model.meshes)
 	{
 		for (auto& primitive : mesh.primitives)
 		{
+			auto& posAccsessor = model.accessors[primitive.attributes["POSITION"]];
+			auto& normAccessor = model.accessors[primitive.attributes["NORMAL"]];
+			auto& uvAccessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
+
+			auto& posBufferView = model.bufferViews[posAccsessor.bufferView];
+			auto& normBufferView = model.bufferViews[normAccessor.bufferView];
+			auto& uvBufferView = model.bufferViews[uvAccessor.bufferView];
+
+			auto& posBuffer = model.buffers[posBufferView.buffer];
+			auto& normBuffer = model.buffers[normBufferView.buffer];
+			auto& uvBuffer = model.buffers[uvBufferView.buffer];
 
 
-			auto& accessor = model.accessors[primitive.attributes["POSITION"]];
+			auto pos = reinterpret_cast<float*>(&posBuffer.data[posBufferView.byteOffset + posAccsessor.byteOffset]);
+			auto norm = reinterpret_cast<float*>(&normBuffer.data[normBufferView.byteOffset + normAccessor.byteOffset]);
+			auto uv = reinterpret_cast<float*>(&uvBuffer.data[uvBufferView.byteOffset + uvAccessor.byteOffset]);
+
+			output.resize(posAccsessor.count);
+			for (int i = 0; i < posAccsessor.count; i++)
+			{
+				output[i] = GltfVertex{
+					Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] } ,
+					Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] },
+					Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] }
+				};
+			}
+
+			auto& accessor = model.accessors[primitive.indices];
 			auto& bufferView = model.bufferViews[accessor.bufferView];
 			auto& buffer = model.buffers[bufferView.buffer];
-
-			auto p = reinterpret_cast<float*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-			for (int i = 0; i < accessor.count; i++)
-			{
-				posList.emplace_back(Eugene::Vector3{ p[i * 3 + 0],p[i * 3 + 1],p[i * 3 + 2] });
-			}
-
-			accessor = model.accessors[primitive.attributes["NORMAL"]];
-			bufferView = model.bufferViews[accessor.bufferView];
-			buffer = model.buffers[bufferView.buffer];
-			p = reinterpret_cast<float*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-			for (int i = 0; i < accessor.count; i++)
-			{
-				normalList.emplace_back(Eugene::Vector3{ p[i * 3 + 0],p[i * 3 + 1],p[i * 3 + 2] });
-			}
-
-			accessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
-			bufferView = model.bufferViews[accessor.bufferView];
-			buffer = model.buffers[bufferView.buffer];
-			p = reinterpret_cast<float*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-			for (int i = 0; i < accessor.count; i++)
-			{
-				uvList.emplace_back(Eugene::Vector2{ p[i * 2 + 0],p[i * 2 + 1] });
-			}
-
-			accessor = model.accessors[primitive.indices];
-			bufferView = model.bufferViews[accessor.bufferView];
-			buffer = model.buffers[bufferView.buffer];
 			auto idxP = reinterpret_cast<std::uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
+			outIndex.resize(accessor.count);
 			for (int i = 0; i < accessor.count; i++)
 			{
-				index_.emplace_back(idxP[i]);
+				outIndex[i] = idxP[i];
 			}
+			break;
 		}
-	}
-
-	auto size = posList.size();
-	output.resize(size);
-	for (int i = 0; i < size; i++)
-	{
-		output[i] = GltfVertex{ posList[i],normalList[i],uvList[i] };
-	}
-
-	outIndex.resize(index_.size());
-	for (int i = 0;i < index_.size(); i++)
-	{
-		outIndex[i] = index_[i];
+		break;
 	}
 }
 
@@ -110,14 +103,16 @@ int main()
 	// 頂点シェーダの入力のレイアウト
 	std::vector<Eugene::ShaderInputLayout> layout
 	{
-		{ "POSITION", 0, Eugene::Format::R32G32_FLOAT }
+		{ "POSITION", 0, Eugene::Format::R32G32B32_FLOAT },
+		{ "NORMAL", 0, Eugene::Format::R32G32B32_FLOAT },
+		{ "TEXCOORD", 0, Eugene::Format::R32G32_FLOAT }
 	};
 
 	// シェーダー
 	std::vector<std::pair<Eugene::Shader, Eugene::ShaderType>> shaders
 	{
-		{ Eugene::Shader{ "./Asset/vs.vso" }, Eugene::ShaderType::Vertex },
-		{ Eugene::Shader{ "./Asset/ps.pso" }, Eugene::ShaderType::Pixel }
+		{ Eugene::Shader{ "./vs.vso" }, Eugene::ShaderType::Vertex },
+		{ Eugene::Shader{ "./ps.pso" }, Eugene::ShaderType::Pixel }
 	};
 
 	// レンダーターゲット
@@ -128,7 +123,7 @@ int main()
 
 	std::vector<std::vector<Eugene::ShaderLayout>> shaderLayout
 	{
-		{ Eugene::ShaderLayout{ Eugene::ViewType::ConstantBuffer, 2,0 } }
+		{ Eugene::ShaderLayout{ Eugene::ViewType::ConstantBuffer, 1,0 } }
 	};
 
 	pipeline.reset(
@@ -165,6 +160,19 @@ int main()
 	std::copy(index.begin(), index.end(), indexMap);
 	indexBuffer->UnMap();
 
+	// カメラ行列を作成
+	std::unique_ptr<Eugene::BufferResource> matrixBuffer;
+	std::unique_ptr<Eugene::ShaderResourceViews> matrixViews;
+	matrixBuffer.reset(graphics->CreateUploadableBufferResource(256));
+	matrixViews.reset(graphics->CreateShaderResourceViews(1));
+	matrixViews->CreateConstantBuffer(*matrixBuffer, 0);
+	Camera camera;
+	Camera* mapCamera = reinterpret_cast<Camera*>(matrixBuffer->Map());
+	auto camPos = Eugene::Vector3{ 0.0f,0.5f,-2.0f };;
+	Eugene::GetLookAtMatrix(camera.view, camPos, camPos + Eugene::forwardVector3<float> *2.0f, Eugene::upVector3<float>);
+	Eugene::GetPerspectiveFovMatrix(camera.projection, Eugene::Deg2Rad(90.0f), 1280.0f / 720.0f);
+	*mapCamera = camera;
+	matrixBuffer->UnMap();
 
 
 	float color[]{ 1.0f, 0.0f, 0.0f,1.0f };
@@ -173,6 +181,25 @@ int main()
 		cmdList->Begin();
 		cmdList->TransitionRenderTargetBegin(graphics->GetBackBufferResource());
 		cmdList->ClearRenderTarget(graphics->GetViews(), color, graphics->GetNowBackBufferIndex());
+		cmdList->SetRenderTarget(graphics->GetViews(), graphics->GetNowBackBufferIndex());
+		cmdList->SetGraphicsPipeline(*pipeline);
+
+		cmdList->SetPrimitiveType(Eugene::PrimitiveType::Triangle);
+
+		// シザーレクトセット
+		cmdList->SetScissorrect({ 0,0 }, { 1280, 720 });
+
+		// ビューポートセット
+		cmdList->SetViewPort({ 0.0f,0.0f }, { 1280.0f, 720.0f });
+
+		cmdList->SetShaderResourceView(*matrixViews, 0, 0);
+
+		cmdList->SetVertexView(*vertexView);
+
+		cmdList->SetIndexView(*indexView);
+
+		cmdList->DrawIndexed(index.size());
+		//cmdList->Draw(vertex_.size());
 
 		cmdList->TransitionRenderTargetEnd(graphics->GetBackBufferResource());
 		cmdList->End();

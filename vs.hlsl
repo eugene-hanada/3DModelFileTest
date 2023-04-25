@@ -3,7 +3,7 @@ struct VertexInput
 {
 	float4 pos : POSITION;
 	float4 normal : NORMAL;
-	float2 uv : TEXCOORD0;
+	float2 uv : TEXCOORD;
 };
 
 struct VertexOutput
@@ -23,6 +23,7 @@ VertexOutput main(VertexInput input)
 {
 	VertexOutput output;
 	float4 pos = mul(view, input.pos);
+
 	output.svPos = mul(projection, pos);
 	output.normal = mul(view, input.normal).xyz;
 	output.uv = input.uv;
