@@ -29,10 +29,38 @@ struct Camera
 	Eugene::Matrix4x4 projection;
 };
 
+struct Mesh
+{
+	Mesh(){}
+	Mesh(Mesh&& mesh)
+	{
+		vertex = std::move(mesh.vertex);
+		index = std::move(mesh.index);
+		vertexBuffer = std::move(mesh.vertexBuffer);
+		vertexView = std::move(mesh.vertexView);
+		indexBuffer = std::move(mesh.indexBuffer);
+		indexView = std::move(mesh.indexView);
+	}
+
+	Mesh& operator=(Mesh&& mesh)
+	{
+		vertex = std::move(mesh.vertex);
+		index = std::move(mesh.index);
+		vertexBuffer = std::move(mesh.vertexBuffer);
+		vertexView = std::move(mesh.vertexView);
+		indexBuffer = std::move(mesh.indexBuffer);
+		indexView = std::move(mesh.indexView);
+	}
+	std::vector<GltfVertex> vertex;
+	std::vector<std::uint16_t> index;
+	std::unique_ptr<Eugene::BufferResource> vertexBuffer;
+	std::unique_ptr<Eugene::VertexView> vertexView;
+	std::unique_ptr<Eugene::BufferResource> indexBuffer;
+	std::unique_ptr<Eugene::IndexView> indexView;
+};
 
 
-
-void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIndex, const std::string& path)
+void LoadGltf(std::list<Mesh>& list, const std::string& path)
 {
 	tinygltf::TinyGLTF gltf;
 	tinygltf::Model model;
@@ -70,39 +98,54 @@ void LoadGltf(std::vector<GltfVertex>& output, std::vector<std::uint16_t>& outIn
 			auto joint = reinterpret_cast<std::uint8_t*>(&boneBuffer.data[boneBufferView.byteOffset + boneAccessor.byteOffset]);
 			auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weighisBufferView.byteOffset + weighisAccessor.byteOffset]);
 
-			
+			Mesh mesh;
 
-			output.resize(posAccsessor.count);
+			mesh.vertex.resize(posAccsessor.count);
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
 				std::uint8_t j[4];
-				output[i].pos = Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] };
-				output[i].normal = Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
-				output[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
-				output[i].joint[0] = joint[i * 4 + 0];
-				output[i].joint[1] = joint[i * 4 + 1];
-				output[i].joint[2] = joint[i * 4 + 2];
-				output[i].joint[3] = joint[i * 4 + 3];
+				mesh.vertex[i].pos = Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] };
+				mesh.vertex[i].normal = Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
+				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
+				mesh.vertex[i].joint[0] = joint[i * 4 + 0];
+				mesh.vertex[i].joint[1] = joint[i * 4 + 1];
+				mesh.vertex[i].joint[2] = joint[i * 4 + 2];
+				mesh.vertex[i].joint[3] = joint[i * 4 + 3];
 				
-				output[i].weight[0] = weight[i * 4 + 0];
-				output[i].weight[1] = weight[i * 4 + 1];
-				output[i].weight[2] = weight[i * 4 + 2];
-				output[i].weight[3] = weight[i * 4 + 3];
+				mesh.vertex[i].weight[0] = weight[i * 4 + 0];
+				mesh.vertex[i].weight[1] = weight[i * 4 + 1];
+				mesh.vertex[i].weight[2] = weight[i * 4 + 2];
+				mesh.vertex[i].weight[3] = weight[i * 4 + 3];
 			}
 
 			auto& accessor = model.accessors[primitive.indices];
 			auto& bufferView = model.bufferViews[accessor.bufferView];
 			auto& buffer = model.buffers[bufferView.buffer];
 			auto idxP = reinterpret_cast<std::uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
-			outIndex.resize(accessor.count);
+			mesh.index.resize(accessor.count);
 			for (int i = 0; i < accessor.count; i++)
 			{
-				outIndex[i] = idxP[i];
+				mesh.index[i] = idxP[i];
 			}
-			break;
+			list.emplace_back(std::move(mesh));
 		}
-		break;
 	}
+}
+
+void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
+{
+	mesh.vertexBuffer.reset(graphics.CreateUploadableBufferResource(sizeof(GltfVertex) * mesh.vertex.size()));
+	mesh.vertexView.reset(graphics.CreateVertexView(sizeof(GltfVertex), mesh.vertex.size(), *mesh.vertexBuffer));
+	GltfVertex* mapped = reinterpret_cast<GltfVertex*>(mesh.vertexBuffer->Map());
+	std::copy(mesh.vertex.begin(), mesh.vertex.end(), mapped);
+	mesh.vertexBuffer->UnMap();
+
+	// インデックスバッファとビュー作成
+	mesh.indexBuffer.reset(graphics.CreateUploadableBufferResource(sizeof(mesh.index[0]) * mesh.index.size()));
+	mesh.indexView.reset(graphics.CreateIndexView(sizeof(mesh.index[0]) * mesh.index.size(), Eugene::Format::R16_UINT, *mesh.indexBuffer));
+	std::uint16_t* indexMap = reinterpret_cast<std::uint16_t*>(mesh.indexBuffer->Map());
+	std::copy(mesh.index.begin(), mesh.index.end(), indexMap);
+	mesh.indexBuffer->UnMap();
 }
 
 
@@ -173,25 +216,31 @@ int main()
 	std::vector<GltfVertex> vertex_;
 	std::vector<std::uint16_t> index;
 
-	LoadGltf(vertex_, index, "untitled.gltf");
+	std::list<Mesh> meshList;
 
-	// 頂点バッファとビュー作成
-	std::unique_ptr<Eugene::BufferResource> vertexBuffer;
-	std::unique_ptr<Eugene::VertexView> vertexView;
-	vertexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(GltfVertex) * vertex_.size()));
-	vertexView.reset(graphics->CreateVertexView(sizeof(GltfVertex), vertex_.size(), *vertexBuffer));
-	GltfVertex* mapped = reinterpret_cast<GltfVertex*>(vertexBuffer->Map());
-	std::copy(vertex_.begin(), vertex_.end(), mapped);
-	vertexBuffer->UnMap();
+	LoadGltf(meshList, "Swat.gltf");
 
-	// インデックスバッファとビュー作成
-	std::unique_ptr<Eugene::BufferResource> indexBuffer;
-	std::unique_ptr<Eugene::IndexView> indexView;
-	indexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(index[0]) * index.size()));
-	indexView.reset(graphics->CreateIndexView(sizeof(index[0]) * index.size(), Eugene::Format::R16_UINT, *indexBuffer));
-	std::uint16_t* indexMap = reinterpret_cast<std::uint16_t*>(indexBuffer->Map());
-	std::copy(index.begin(), index.end(), indexMap);
-	indexBuffer->UnMap();
+	//// 頂点バッファとビュー作成
+	//std::unique_ptr<Eugene::BufferResource> vertexBuffer;
+	//std::unique_ptr<Eugene::VertexView> vertexView;
+	//vertexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(GltfVertex) * vertex_.size()));
+	//vertexView.reset(graphics->CreateVertexView(sizeof(GltfVertex), vertex_.size(), *vertexBuffer));
+	//GltfVertex* mapped = reinterpret_cast<GltfVertex*>(vertexBuffer->Map());
+	//std::copy(vertex_.begin(), vertex_.end(), mapped);
+	//vertexBuffer->UnMap();
+
+	//// インデックスバッファとビュー作成
+	//std::unique_ptr<Eugene::BufferResource> indexBuffer;
+	//std::unique_ptr<Eugene::IndexView> indexView;
+	//indexBuffer.reset(graphics->CreateUploadableBufferResource(sizeof(index[0]) * index.size()));
+	//indexView.reset(graphics->CreateIndexView(sizeof(index[0]) * index.size(), Eugene::Format::R16_UINT, *indexBuffer));
+	//std::uint16_t* indexMap = reinterpret_cast<std::uint16_t*>(indexBuffer->Map());
+	//std::copy(index.begin(), index.end(), indexMap);
+	//indexBuffer->UnMap();
+	for (auto& mesh : meshList)
+	{
+		MeshInit(*graphics, mesh);
+	}
 
 	// カメラ行列を作成
 	std::unique_ptr<Eugene::BufferResource> matrixBuffer;
@@ -218,7 +267,6 @@ int main()
 		cmdList->SetGraphicsPipeline(*pipeline);
 
 		cmdList->SetPrimitiveType(Eugene::PrimitiveType::Triangle);
-
 		// シザーレクトセット
 		cmdList->SetScissorrect({ 0,0 }, { 1280, 720 });
 
@@ -227,12 +275,18 @@ int main()
 
 		cmdList->SetShaderResourceView(*matrixViews, 0, 0);
 
-		cmdList->SetVertexView(*vertexView);
+	/*	cmdList->SetVertexView(*vertexView);
 
-		cmdList->SetIndexView(*indexView);
+		cmdList->SetIndexView(*indexView);*/
 
-		cmdList->DrawIndexed(index.size());
-		//cmdList->Draw(vertex_.size());
+		//cmdList->DrawIndexed(index.size());
+		
+		for (auto& mesh : meshList)
+		{
+			cmdList->SetVertexView(*mesh.vertexView);
+			cmdList->SetIndexView(*mesh.indexView);
+			cmdList->DrawIndexed(mesh.index.size());
+		}
 
 		cmdList->TransitionRenderTargetEnd(graphics->GetBackBufferResource());
 		cmdList->End();
