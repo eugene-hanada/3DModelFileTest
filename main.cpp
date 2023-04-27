@@ -3,6 +3,7 @@
 #include <memory>
 #include <deque>
 #include <fstream>
+#include <filesystem>
 #include <EugeneLib.h>
 
 #include "EugeneLib/Include/Graphics/IndexView.h"
@@ -39,13 +40,13 @@ struct SkeletalGltfVertex
 	float weight[4];
 };
 
-struct StaticModel
+struct MeshHeader
 {
-	char sig[4]{ 's','m','d','l' };
+	char sig[4]{ 'm','e','s','h' };
 	float version;
 	std::uint32_t meshNum;
-	std::uint32_t textureNum;
-	std::uint32_t materialNum;
+	std::uint32_t vertexSize;
+	std::uint32_t indexSize;
 };
 
 struct Material
@@ -100,36 +101,35 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
 	std::vector<std::uint8_t> joints;
 
-	StaticModel h{};
-	std::ofstream file{ "./" + path.substr(0, path.find_last_of(".")) + ".smdl", std::ios::binary };
+	MeshHeader h{};
+	std::ofstream file{ "./" + path.substr(0, path.find_last_of(".")) + ".mesh", std::ios::binary };
 	h.version = 0.01f;
 	for (auto& mesh : model.meshes)
 	{
 		h.meshNum += static_cast<std::uint32_t>(mesh.primitives.size());
 	}
 	
-	h.textureNum = static_cast<std::uint32_t>(model.images.size());
-	h.materialNum = static_cast<std::uint32_t>(model.materials.size());
-
+	h.vertexSize = static_cast<std::uint32_t>(sizeof(GltfVertex));
+	h.indexSize = static_cast<std::uint32_t>(sizeof(std::uint16_t));
 	file.write(reinterpret_cast<char*>(&h), sizeof(h));
 
-	// âÊëúèÓïÒ
-	for (auto& img : model.images)
-	{
-		auto size = img.name.size();
-		file.write(reinterpret_cast<char*>(&size), sizeof(size));
-		file.write(img.name.data(), sizeof(img.name[0]) * size);
+	//// âÊëúèÓïÒ
+	//for (auto& img : model.images)
+	//{
+	//	auto size = img.name.size();
+	//	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	//	file.write(img.name.data(), sizeof(img.name[0]) * size);
 
-		//stbi_write_png(("./" + img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
-	}
+	//	//stbi_write_png(("./" + img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
+	//}
 
-	Material m{};
-	for (auto& material : model.materials)
-	{
-		m.baseColorTexture = material.pbrMetallicRoughness.baseColorTexture.index;
-		m.normalMapTexture = material.normalTexture.index;
-		file.write(reinterpret_cast<char*>(&m), sizeof(m));
-	}
+	//Material m{};
+	//for (auto& material : model.materials)
+	//{
+	//	m.baseColorTexture = material.pbrMetallicRoughness.baseColorTexture.index;
+	//	m.normalMapTexture = material.normalTexture.index;
+	//	file.write(reinterpret_cast<char*>(&m), sizeof(m));
+	//}
 
 
 	for (auto& mesh : model.meshes)
@@ -172,9 +172,9 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
 				//std::uint8_t j[4];
-				mesh.vertex[i].pos = Eugene::Vector3{ pos[i * 3 + 0],pos[i * 3 + 1],pos[i * 3 + 2] };
-				mesh.vertex[i].normal = Eugene::Vector3{ norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
-				mesh.vertex[i].tan = Eugene::Vector3{ tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
+				mesh.vertex[i].pos = Eugene::Vector3{ pos[i * 3 + 2] ,pos[i * 3 + 1],pos[i * 3 + 0] };
+				mesh.vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],-norm[i * 3 + 2] };
+				mesh.vertex[i].tan = Eugene::Vector3{ -tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
 				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
 				/*mesh.vertex[i].joint[0] = joint[i * 4 + 0];
 				mesh.vertex[i].joint[1] = joint[i * 4 + 1];
@@ -200,21 +200,61 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 
 			// ÉÅÉbÉVÉÖèÓïÒ
 			
-			auto size = mesh.vertex.size();
+			std::uint32_t size = static_cast<std::uint32_t>(mesh.vertex.size());
 			file.write(reinterpret_cast<char*>(&size), sizeof(size));
 			file.write(reinterpret_cast<char*>(mesh.vertex.data()), sizeof(mesh.vertex[0]) * mesh.vertex.size());
 
-			size = mesh.index.size();
+			size = static_cast<std::uint32_t>(mesh.index.size());
 			file.write(reinterpret_cast<char*>(&size), sizeof(size));
 			file.write(reinterpret_cast<char*>(mesh.index.data()), sizeof(mesh.index[0]) * mesh.index.size());
 			
-			std::uint64_t materialIdx = primitive.material;
-			file.write(reinterpret_cast<char*>(&materialIdx), sizeof(materialIdx));
+			if (primitive.material == -1)
+			{
+				size = 0u;
+			}
+			else
+			{
+				size = static_cast<std::uint32_t>(model.materials[primitive.material].name.size());
+			}
+			file.write(reinterpret_cast<char*>(&size), sizeof(size));
+
+			if (size != 0u)
+			{
+				file.write(
+					model.materials[primitive.material].name.data(),
+					sizeof(model.materials[primitive.material].name[0]) * model.materials[primitive.material].name.size()
+				);
+			}
 
 			list.emplace_back(std::move(mesh));
 		}
 	}
 
+}
+
+void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
+{
+	std::ifstream file{ path , std::ios::binary};
+	MeshHeader h{};
+	file.read(reinterpret_cast<char*>(&h), sizeof(h));
+	//std::vector<Mesh> meshs{ h.meshNum };
+	meshs.resize(h.meshNum);
+	for (std::uint32_t i = 0u; i < h.meshNum; i++)
+	{
+		std::uint32_t size = 0u;
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));
+		meshs[i].vertex.resize(size);
+		file.read(reinterpret_cast<char*>(meshs[i].vertex.data()), h.vertexSize * size);
+
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));
+		meshs[i].index.resize(size);
+		file.read(reinterpret_cast<char*>(meshs[i].index.data()), h.indexSize * size);
+
+		file.read(reinterpret_cast<char*>(&size), sizeof(size));
+		std::string matName;
+		matName.resize(size);
+		file.read(matName.data(), sizeof(matName[0]) * matName.size());
+	}
 }
 
 void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
@@ -290,10 +330,11 @@ int main(int argc, char* argv[])
 	std::vector<GltfVertex> vertex_;
 	std::vector<std::uint16_t> index;
 
-	std::list<Mesh> meshList;
-
-	LoadGltf(meshList, "Swat.gltf");
-
+	std::vector<Mesh> meshList;
+	std::list<Mesh> mlist;
+	//LoadMesh("Swat.mesh", meshList);
+	LoadGltf(mlist, "untitled.gltf");
+	
 	for (auto& mesh : meshList)
 	{
 		MeshInit(*graphics, mesh);
