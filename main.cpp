@@ -172,10 +172,10 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
 				//std::uint8_t j[4];
-				mesh.vertex[i].pos = Eugene::Vector3{ pos[i * 3 + 2] ,pos[i * 3 + 1],pos[i * 3 + 0] };
-				mesh.vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],-norm[i * 3 + 2] };
+				mesh.vertex[i].pos = Eugene::Vector3{ -pos[i * 3 + 0] ,pos[i * 3 + 1],pos[i * 3 + 2] };
+				mesh.vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
 				mesh.vertex[i].tan = Eugene::Vector3{ -tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
-				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
+				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],1.0f - uv[i * 2 + 1] };
 				/*mesh.vertex[i].joint[0] = joint[i * 4 + 0];
 				mesh.vertex[i].joint[1] = joint[i * 4 + 1];
 				mesh.vertex[i].joint[2] = joint[i * 4 + 2];
@@ -197,6 +197,7 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 				mesh.index[i] = idxP[i];
 			}
 
+			std::reverse(mesh.index.begin(), mesh.index.end());
 
 			// ƒƒbƒVƒ…î•ñ
 			
@@ -332,9 +333,8 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::list<Mesh> mlist;
-	//LoadMesh("Swat.mesh", meshList);
-	LoadGltf(mlist, "untitled.gltf");
-	
+	LoadGltf(mlist, "Swat.gltf");
+	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
 	{
 		MeshInit(*graphics, mesh);
