@@ -43,16 +43,22 @@ struct SkeletalGltfVertex
 struct MeshHeader
 {
 	char sig[4]{ 'm','e','s','h' };
-	float version;
-	std::uint32_t meshNum;
+	std::uint32_t version;
 	std::uint32_t vertexSize;
 	std::uint32_t indexSize;
 };
 
+struct MaterialHeader
+{
+	char sig[4]{ 'm','e','s','h' };
+	std::uint32_t version;
+};
+
 struct Material
 {
-	std::uint32_t baseColorTexture;
-	std::uint32_t normalMapTexture;
+	std::string colorTexture;
+	std::string normalTexture;
+	std::string pipelineName;
 };
 
 struct Camera
@@ -72,6 +78,7 @@ struct Mesh
 		vertexView = std::move(mesh.vertexView);
 		indexBuffer = std::move(mesh.indexBuffer);
 		indexView = std::move(mesh.indexView);
+		materialName = std::move(mesh.materialName);
 	}
 
 	Mesh& operator=(Mesh&& mesh) noexcept
@@ -82,6 +89,7 @@ struct Mesh
 		vertexView = std::move(mesh.vertexView);
 		indexBuffer = std::move(mesh.indexBuffer);
 		indexView = std::move(mesh.indexView);
+		materialName = std::move(mesh.materialName);
 	}
 	std::vector<GltfVertex> vertex;
 	std::vector<std::uint16_t> index;
@@ -89,10 +97,58 @@ struct Mesh
 	std::unique_ptr<Eugene::VertexView> vertexView;
 	std::unique_ptr<Eugene::BufferResource> indexBuffer;
 	std::unique_ptr<Eugene::IndexView> indexView;
+	std::string materialName;
 };
 
+void ExportMesh(const std::filesystem::path& path, Mesh& mesh)
+{
+	MeshHeader h{};
+	std::ofstream file{ path, std::ios::binary };
+	h.version = 0;
+	h.vertexSize = static_cast<std::uint32_t>(sizeof(GltfVertex));
+	h.indexSize = static_cast<std::uint32_t>(sizeof(std::uint16_t));
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
 
-void LoadGltf(std::list<Mesh>& list, const std::string& path)
+	std::uint32_t size = static_cast<std::uint32_t>(mesh.vertex.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(reinterpret_cast<char*>(mesh.vertex.data()), sizeof(mesh.vertex[0]) * mesh.vertex.size());
+
+	size = static_cast<std::uint32_t>(mesh.index.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(reinterpret_cast<char*>(mesh.index.data()), sizeof(mesh.index[0]) * mesh.index.size());
+
+	/*size = static_cast<std::uint32_t>(mesh.materialName.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(reinterpret_cast<char*>(mesh.materialName.data()), sizeof(mesh.materialName[0]) * mesh.materialName.size());*/
+}
+
+
+void ExportMaterial(const std::filesystem::path& path, tinygltf::Material& material, tinygltf::Model& model)
+{
+	std::ofstream file{ path, std::ios::binary };
+	MaterialHeader h{};
+	h.version = 0;
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
+	auto colorIndex = model.textures[material.pbrMetallicRoughness.baseColorTexture.index].source;
+	std::uint32_t size = 0;
+	size = model.images[ colorIndex].name.size();
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(model.images[colorIndex].name.data(), sizeof(model.images[colorIndex].name[0]) * size);
+
+
+	auto normalIndex = model.textures[material.normalTexture.index].source;
+	size = model.images[normalIndex].name.size();
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(model.images[normalIndex].name.data(), sizeof(model.images[normalIndex].name[0]) * size);
+
+	std::string gpipeName = "Mesh";
+	size = gpipeName.size();
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(gpipeName.data(), sizeof(gpipeName[0]) * size);
+}
+
+
+void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 {
 	tinygltf::TinyGLTF gltf;
 	tinygltf::Model model;
@@ -101,41 +157,12 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
 	std::vector<std::uint8_t> joints;
 
-	MeshHeader h{};
-	std::ofstream file{ "./" + path.substr(0, path.find_last_of(".")) + ".mesh", std::ios::binary };
-	h.version = 0.01f;
-	for (auto& mesh : model.meshes)
+
+	for (auto& m : model.meshes)
 	{
-		h.meshNum += static_cast<std::uint32_t>(mesh.primitives.size());
-	}
-	
-	h.vertexSize = static_cast<std::uint32_t>(sizeof(GltfVertex));
-	h.indexSize = static_cast<std::uint32_t>(sizeof(std::uint16_t));
-	file.write(reinterpret_cast<char*>(&h), sizeof(h));
-
-	//// âÊëúèÓïÒ
-	//for (auto& img : model.images)
-	//{
-	//	auto size = img.name.size();
-	//	file.write(reinterpret_cast<char*>(&size), sizeof(size));
-	//	file.write(img.name.data(), sizeof(img.name[0]) * size);
-
-	//	//stbi_write_png(("./" + img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
-	//}
-
-	//Material m{};
-	//for (auto& material : model.materials)
-	//{
-	//	m.baseColorTexture = material.pbrMetallicRoughness.baseColorTexture.index;
-	//	m.normalMapTexture = material.normalTexture.index;
-	//	file.write(reinterpret_cast<char*>(&m), sizeof(m));
-	//}
-
-
-	for (auto& mesh : model.meshes)
-	{
-		for (auto& primitive : mesh.primitives)
+		for (int p = 0; p < m.primitives.size(); p++)
 		{
+			auto& primitive = m.primitives[p];
 			auto& posAccsessor = model.accessors[primitive.attributes["POSITION"]];
 			auto& normAccessor = model.accessors[primitive.attributes["NORMAL"]];
 			auto& tanAccessor = model.accessors[primitive.attributes["TANGENT"]];
@@ -172,10 +199,10 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
 				//std::uint8_t j[4];
-				mesh.vertex[i].pos = Eugene::Vector3{ -pos[i * 3 + 0] ,pos[i * 3 + 1],pos[i * 3 + 2] };
+				mesh.vertex[i].pos = Eugene::Vector3{ -pos[i * 3 + 0] ,pos[i * 3 + 1], pos[i * 3 + 2] };
 				mesh.vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
 				mesh.vertex[i].tan = Eugene::Vector3{ -tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
-				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],1.0f - uv[i * 2 + 1] };
+				mesh.vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
 				/*mesh.vertex[i].joint[0] = joint[i * 4 + 0];
 				mesh.vertex[i].joint[1] = joint[i * 4 + 1];
 				mesh.vertex[i].joint[2] = joint[i * 4 + 2];
@@ -197,65 +224,63 @@ void LoadGltf(std::list<Mesh>& list, const std::string& path)
 				mesh.index[i] = idxP[i];
 			}
 
-			std::reverse(mesh.index.begin(), mesh.index.end());
+			for (int i = 0; i < accessor.count; i++)
+			{
+				std::swap(mesh.index[i + 0], mesh.index[i + 2]);
+				i += 2;
+			}
+
+			//std::reverse(mesh.index.begin(), mesh.index.end());
 
 			// ÉÅÉbÉVÉÖèÓïÒ
 			
-			std::uint32_t size = static_cast<std::uint32_t>(mesh.vertex.size());
-			file.write(reinterpret_cast<char*>(&size), sizeof(size));
-			file.write(reinterpret_cast<char*>(mesh.vertex.data()), sizeof(mesh.vertex[0]) * mesh.vertex.size());
-
-			size = static_cast<std::uint32_t>(mesh.index.size());
-			file.write(reinterpret_cast<char*>(&size), sizeof(size));
-			file.write(reinterpret_cast<char*>(mesh.index.data()), sizeof(mesh.index[0]) * mesh.index.size());
 			
-			if (primitive.material == -1)
-			{
-				size = 0u;
-			}
-			else
-			{
-				size = static_cast<std::uint32_t>(model.materials[primitive.material].name.size());
-			}
-			file.write(reinterpret_cast<char*>(&size), sizeof(size));
+			
 
-			if (size != 0u)
+			if (model.materials[primitive.material].name.size() != 0u)
 			{
-				file.write(
-					model.materials[primitive.material].name.data(),
-					sizeof(model.materials[primitive.material].name[0]) * model.materials[primitive.material].name.size()
-				);
+				mesh.materialName = model.materials[primitive.material].name;
 			}
-
+			ExportMesh(path.substr(0, path.find_last_of("."))+ m.name + std::to_string(p) + ".mesh", mesh);
 			list.emplace_back(std::move(mesh));
 		}
 	}
 
+	
+	
+	for (auto& material : model.materials)
+	{
+		ExportMaterial("./" + material.name + ".mat", material, model);
+	}
+
 }
+
+
+
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
 {
-	std::ifstream file{ path , std::ios::binary};
-	MeshHeader h{};
-	file.read(reinterpret_cast<char*>(&h), sizeof(h));
-	//std::vector<Mesh> meshs{ h.meshNum };
-	meshs.resize(h.meshNum);
-	for (std::uint32_t i = 0u; i < h.meshNum; i++)
-	{
-		std::uint32_t size = 0u;
-		file.read(reinterpret_cast<char*>(&size), sizeof(size));
-		meshs[i].vertex.resize(size);
-		file.read(reinterpret_cast<char*>(meshs[i].vertex.data()), h.vertexSize * size);
+	//std::ifstream file{ path , std::ios::binary};
+	//MeshHeader h{};
+	//file.read(reinterpret_cast<char*>(&h), sizeof(h));
+	////std::vector<Mesh> meshs{ h.meshNum };
+	//meshs.resize(h.meshNum);
+	//for (std::uint32_t i = 0u; i < h.meshNum; i++)
+	//{
+	//	std::uint32_t size = 0u;
+	//	file.read(reinterpret_cast<char*>(&size), sizeof(size));
+	//	meshs[i].vertex.resize(size);
+	//	file.read(reinterpret_cast<char*>(meshs[i].vertex.data()), h.vertexSize * size);
 
-		file.read(reinterpret_cast<char*>(&size), sizeof(size));
-		meshs[i].index.resize(size);
-		file.read(reinterpret_cast<char*>(meshs[i].index.data()), h.indexSize * size);
+	//	file.read(reinterpret_cast<char*>(&size), sizeof(size));
+	//	meshs[i].index.resize(size);
+	//	file.read(reinterpret_cast<char*>(meshs[i].index.data()), h.indexSize * size);
 
-		file.read(reinterpret_cast<char*>(&size), sizeof(size));
-		std::string matName;
-		matName.resize(size);
-		file.read(matName.data(), sizeof(matName[0]) * matName.size());
-	}
+	//	file.read(reinterpret_cast<char*>(&size), sizeof(size));
+	//	std::string matName;
+	//	matName.resize(size);
+	//	file.read(matName.data(), sizeof(matName[0]) * matName.size());
+	//}
 }
 
 void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
@@ -332,7 +357,7 @@ int main(int argc, char* argv[])
 	std::vector<std::uint16_t> index;
 
 	std::vector<Mesh> meshList;
-	std::list<Mesh> mlist;
+	std::vector<Mesh> mlist;
 	LoadGltf(mlist, "Swat.gltf");
 	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
