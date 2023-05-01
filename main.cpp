@@ -5,7 +5,8 @@
 #include <fstream>
 #include <filesystem>
 #include <EugeneLib.h>
-
+#include <Common/Debug.h>
+#include <unordered_map>
 #include "EugeneLib/Include/Graphics/IndexView.h"
 
 #include "EugeneLib/Include/Math/Geometry.h"
@@ -27,6 +28,7 @@ struct GltfVertex
 	Eugene::Vector2 uv;
 };
 
+
 /// <summary>
 /// アニメーションあり頂点
 /// </summary>
@@ -34,10 +36,24 @@ struct SkeletalGltfVertex
 {
 	Eugene::Vector3 pos;
 	Eugene::Vector3 normal;
-	Eugene::Vector2 uv;
 	Eugene::Vector3 tan;
+	Eugene::Vector2 uv;
 	std::uint16_t joint[4];
 	float weight[4];
+};
+
+struct Bone
+{
+	std::string name_;
+	std::vector<int> children;
+	Eugene::Matrix4x4 matrix_;
+};
+
+struct BoneHeader
+{
+	char sig[4]{ 'b','o','n','e' };
+	std::uint32_t version;
+	std::uint32_t num;
 };
 
 struct MeshHeader
@@ -100,7 +116,7 @@ struct Mesh
 	std::string materialName;
 };
 
-void ExportMesh(const std::filesystem::path& path, Mesh& mesh)
+void ExportMesh(const std::filesystem::path& path, std::vector<GltfVertex>& vert,std::vector<std::uint16_t>& ind)
 {
 	MeshHeader h{};
 	std::ofstream file{ path, std::ios::binary };
@@ -109,21 +125,34 @@ void ExportMesh(const std::filesystem::path& path, Mesh& mesh)
 	h.indexSize = static_cast<std::uint32_t>(sizeof(std::uint16_t));
 	file.write(reinterpret_cast<char*>(&h), sizeof(h));
 
-	std::uint32_t size = static_cast<std::uint32_t>(mesh.vertex.size());
+	std::uint32_t size = static_cast<std::uint32_t>(vert.size());
 	file.write(reinterpret_cast<char*>(&size), sizeof(size));
-	file.write(reinterpret_cast<char*>(mesh.vertex.data()), sizeof(mesh.vertex[0]) * mesh.vertex.size());
+	file.write(reinterpret_cast<char*>(vert.data()), sizeof(vert[0]) * vert.size());
 
-	size = static_cast<std::uint32_t>(mesh.index.size());
+	size = static_cast<std::uint32_t>(ind.size());
 	file.write(reinterpret_cast<char*>(&size), sizeof(size));
-	file.write(reinterpret_cast<char*>(mesh.index.data()), sizeof(mesh.index[0]) * mesh.index.size());
-
-	/*size = static_cast<std::uint32_t>(mesh.materialName.size());
-	file.write(reinterpret_cast<char*>(&size), sizeof(size));
-	file.write(reinterpret_cast<char*>(mesh.materialName.data()), sizeof(mesh.materialName[0]) * mesh.materialName.size());*/
+	file.write(reinterpret_cast<char*>(ind.data()), sizeof(ind[0]) * ind.size());
 }
 
+void ExportMesh(const std::filesystem::path& path, std::vector<SkeletalGltfVertex>& vert, std::vector<std::uint16_t>& ind)
+{
+	MeshHeader h{};
+	std::ofstream file{ path, std::ios::binary };
+	h.version = 0;
+	h.vertexSize = static_cast<std::uint32_t>(sizeof(SkeletalGltfVertex));
+	h.indexSize = static_cast<std::uint32_t>(sizeof(std::uint16_t));
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
 
-void ExportMaterial(const std::filesystem::path& path, tinygltf::Material& material, tinygltf::Model& model)
+	std::uint32_t size = static_cast<std::uint32_t>(vert.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(reinterpret_cast<char*>(vert.data()), sizeof(vert[0]) * vert.size());
+
+	size = static_cast<std::uint32_t>(ind.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	file.write(reinterpret_cast<char*>(ind.data()), sizeof(ind[0]) * ind.size());
+}
+
+void ExportMaterial(const std::filesystem::path& path, tinygltf::Material& material, tinygltf::Model& model, const std::string& pipeline)
 {
 	std::ofstream file{ path, std::ios::binary };
 	MaterialHeader h{};
@@ -141,12 +170,33 @@ void ExportMaterial(const std::filesystem::path& path, tinygltf::Material& mater
 	file.write(reinterpret_cast<char*>(&size), sizeof(size));
 	file.write(model.images[normalIndex].name.data(), sizeof(model.images[normalIndex].name[0]) * size);
 
-	std::string gpipeName = "Mesh";
+	std::string gpipeName = pipeline;
 	size = gpipeName.size();
 	file.write(reinterpret_cast<char*>(&size), sizeof(size));
 	file.write(gpipeName.data(), sizeof(gpipeName[0]) * size);
 }
 
+void ExportBone(const std::filesystem::path& path, std::vector<Bone>& bones)
+{
+	std::ofstream file{ path,std::ios::binary };
+	BoneHeader h{};
+	h.num = bones.size();
+
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
+
+	for (auto& bone : bones)
+	{
+		std::uint32_t size = bone.name_.size();
+		file.write(reinterpret_cast<char*>(&size), sizeof(size));
+		file.write(reinterpret_cast<char*>(bone.name_.data()), sizeof(bone.name_[0]) * size);
+
+		file.write(reinterpret_cast<char*>(&bone.matrix_), sizeof(bone.matrix_));
+		size = static_cast<std::uint32_t>(bone.children.size());
+		file.write(reinterpret_cast<char*>(&size), sizeof(size));
+		file.write(reinterpret_cast<char*>(bone.children.data()), sizeof(Bone) * size);
+	}
+
+}
 
 void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 {
@@ -155,7 +205,6 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 	std::string err;
 	std::string warn;
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
-	std::vector<std::uint8_t> joints;
 
 
 	for (auto& m : model.meshes)
@@ -194,7 +243,7 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 			//auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weighisBufferView.byteOffset + weighisAccessor.byteOffset]);
 
 			Mesh mesh;
-
+			
 			mesh.vertex.resize(posAccsessor.count);
 			for (int i = 0; i < posAccsessor.count; i++)
 			{
@@ -241,7 +290,7 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 			{
 				mesh.materialName = model.materials[primitive.material].name;
 			}
-			ExportMesh(path.substr(0, path.find_last_of("."))+ m.name + std::to_string(p) + ".mesh", mesh);
+			ExportMesh(path.substr(0, path.find_last_of("."))+ m.name + std::to_string(p) + ".mesh", mesh.vertex,mesh.index);
 			list.emplace_back(std::move(mesh));
 		}
 	}
@@ -250,13 +299,151 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 	
 	for (auto& material : model.materials)
 	{
-		ExportMaterial("./" + material.name + ".mat", material, model);
+		ExportMaterial("./" + material.name + ".mat", material, model,"StaticMesh");
 	}
 
 }
 
+void LoadBone(tinygltf::Model& model, int idx,std::vector<Bone>& bones, std::unordered_map<std::string, int>& nameTbl)
+{
+	//bones[idx].children.resize(model.nodes[idx].children.size());
+	auto nodeIdx = model.skins[0].joints[idx];
+	bones[idx].name_ = model.nodes[nodeIdx].name;
+	Eugene::Vector3 pos{ 
+		-static_cast<float>(model.nodes[nodeIdx].translation[0]),
+		static_cast<float>(model.nodes[nodeIdx].translation[1]),
+		static_cast<float>(model.nodes[nodeIdx].translation[2]) 
+	};
 
 
+	Eugene::Quaternion q{ 
+		-static_cast<float>(model.nodes[nodeIdx].rotation[0]) ,
+		static_cast<float>(model.nodes[nodeIdx].rotation[1] ),
+		static_cast<float>(model.nodes[nodeIdx].rotation[2]) ,
+		-static_cast<float>(model.nodes[nodeIdx].rotation[3])
+	};
+	
+	Eugene::GetTransformMatrix(bones[idx].matrix_, q, pos, { 1.0f,1.0f,1.0f });
+
+	for (int i = 0; i < model.nodes[nodeIdx].children.size(); i++)
+	{
+		auto child = model.nodes[nodeIdx].children[i];
+		if (nameTbl.contains(model.nodes[child].name))
+		{
+			bones[idx].children.push_back(nameTbl[model.nodes[child].name]);
+			LoadBone(model, bones[idx].children[i], bones, nameTbl);
+		}
+	}
+}
+
+void LoadSkeltalGltf(const std::string& path)
+{
+	tinygltf::TinyGLTF gltf;
+	tinygltf::Model model;
+	std::string err;
+	std::string warn;
+	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
+
+
+	for (auto& m : model.meshes)
+	{
+		for (int p = 0; p < m.primitives.size(); p++)
+		{
+			auto& primitive = m.primitives[p];
+			auto& posAccsessor = model.accessors[primitive.attributes["POSITION"]];
+			auto& normAccessor = model.accessors[primitive.attributes["NORMAL"]];
+			auto& tanAccessor = model.accessors[primitive.attributes["TANGENT"]];
+			auto& uvAccessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
+			auto& boneAccessor = model.accessors[primitive.attributes["JOINTS_0"]];
+			auto& weighisAccessor = model.accessors[primitive.attributes["WEIGHIS_0"]];
+
+			auto& posBufferView = model.bufferViews[posAccsessor.bufferView];
+			auto& normBufferView = model.bufferViews[normAccessor.bufferView];
+			auto& tanBufferView = model.bufferViews[tanAccessor.bufferView];
+			auto& uvBufferView = model.bufferViews[uvAccessor.bufferView];
+			auto& boneBufferView = model.bufferViews[boneAccessor.bufferView];
+			auto& weighisBufferView = model.bufferViews[weighisAccessor.bufferView];
+
+			auto& posBuffer = model.buffers[posBufferView.buffer];
+			auto& normBuffer = model.buffers[normBufferView.buffer];
+			auto& tanBuffer = model.buffers[tanBufferView.buffer];
+			auto& uvBuffer = model.buffers[uvBufferView.buffer];
+			auto& boneBuffer = model.buffers[boneBufferView.buffer];
+			auto& weighisBuffer = model.buffers[weighisBufferView.buffer];
+
+			auto pos = reinterpret_cast<float*>(&posBuffer.data[posBufferView.byteOffset + posAccsessor.byteOffset]);
+			auto norm = reinterpret_cast<float*>(&normBuffer.data[normBufferView.byteOffset + normAccessor.byteOffset]);
+			auto tan = reinterpret_cast<float*>(&tanBuffer.data[tanBufferView.byteOffset + tanAccessor.byteOffset]);
+			auto uv = reinterpret_cast<float*>(&uvBuffer.data[uvBufferView.byteOffset + uvAccessor.byteOffset]);
+			auto joint = reinterpret_cast<std::uint8_t*>(&boneBuffer.data[boneBufferView.byteOffset + boneAccessor.byteOffset]);
+			auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weighisBufferView.byteOffset + weighisAccessor.byteOffset]);
+
+			std::vector<SkeletalGltfVertex> vertex;
+			vertex.resize(posAccsessor.count);
+			for (int i = 0; i < posAccsessor.count; i++)
+			{
+				std::uint8_t j[4];
+				vertex[i].pos = Eugene::Vector3{ -pos[i * 3 + 0] ,pos[i * 3 + 1], pos[i * 3 + 2] };
+				vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
+				vertex[i].tan = Eugene::Vector3{ -tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
+				vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
+				vertex[i].joint[0] = joint[i * 4 + 0];
+				vertex[i].joint[1] = joint[i * 4 + 1];
+				vertex[i].joint[2] = joint[i * 4 + 2];
+				vertex[i].joint[3] = joint[i * 4 + 3];
+
+				vertex[i].weight[0] = weight[i * 4 + 0];
+				vertex[i].weight[1] = weight[i * 4 + 1];
+				vertex[i].weight[2] = weight[i * 4 + 2];
+				vertex[i].weight[3] = weight[i * 4 + 3];
+			}
+
+			auto& accessor = model.accessors[primitive.indices];
+			auto& bufferView = model.bufferViews[accessor.bufferView];
+			auto& buffer = model.buffers[bufferView.buffer];
+			auto idxP = reinterpret_cast<std::uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
+			std::vector<std::uint16_t> index;
+			index.resize(accessor.count);
+			for (int i = 0; i < accessor.count; i++)
+			{
+				index[i] = idxP[i];
+			}
+
+			for (int i = 0; i < accessor.count; i++)
+			{
+				std::swap(index[i + 0], index[i + 2]);
+				i += 2;
+			}
+			auto name = m.name;
+			ExportMesh(path.substr(0, path.find_last_of(".")) + name + std::to_string(p) + ".mesh", vertex, index);
+			
+		}
+	}
+
+	for (auto& material : model.materials)
+	{
+		ExportMaterial("./" + material.name + ".mat", material, model, "SkeletalMesh");
+	}
+
+	for (auto& skin : model.skins)
+	{
+		DebugLog(skin.name);
+		std::unordered_map<std::string, int> map;
+		std::vector<Bone> bones;
+		bones.resize(skin.joints.size());
+		map.reserve(skin.joints.size());
+		for (int i = 0; i < skin.joints.size(); i++)
+		{
+			map.emplace(model.nodes[skin.joints[i]].name,i);
+		}
+
+		for (auto& joint : skin.joints)
+		{
+			LoadBone(model, map[model.nodes[joint].name],bones,map);
+		}
+		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
+	}
+}
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
 {
@@ -293,7 +480,7 @@ void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
 
 	// インデックスバッファとビュー作成
 	mesh.indexBuffer.reset(graphics.CreateUploadableBufferResource(sizeof(mesh.index[0]) * mesh.index.size()));
-	mesh.indexView.reset(graphics.CreateIndexView(sizeof(mesh.index[0]) * mesh.index.size(), Eugene::Format::R16_UINT, *mesh.indexBuffer));
+	//mesh.indexView.reset(graphics.CreateIndexView(sizeof(mesh.index[0]) * mesh.index.size(), Eugene::Format::R16_UINT, *mesh.indexBuffer));
 	std::uint16_t* indexMap = reinterpret_cast<std::uint16_t*>(mesh.indexBuffer->Map());
 	std::copy(mesh.index.begin(), mesh.index.end(), indexMap);
 	mesh.indexBuffer->UnMap();
@@ -358,7 +545,7 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
-	LoadGltf(mlist, "Swat.gltf");
+	LoadSkeltalGltf("Swat.gltf");
 	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
 	{
