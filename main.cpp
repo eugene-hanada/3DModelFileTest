@@ -45,8 +45,8 @@ struct SkeletalGltfVertex
 struct Bone
 {
 	std::string name_;
+	int parent_ = -1;
 	std::vector<int> children;
-	Eugene::Matrix4x4 matrix_;
 };
 
 struct BoneHeader
@@ -186,14 +186,21 @@ void ExportBone(const std::filesystem::path& path, std::vector<Bone>& bones)
 
 	for (auto& bone : bones)
 	{
+		// ñºëOÇèëÇ´çûÇﬁ
 		std::uint32_t size = bone.name_.size();
 		file.write(reinterpret_cast<char*>(&size), sizeof(size));
 		file.write(reinterpret_cast<char*>(bone.name_.data()), sizeof(bone.name_[0]) * size);
 
-		file.write(reinterpret_cast<char*>(&bone.matrix_), sizeof(bone.matrix_));
+		// êeIndexÇèëÇ´çûÇﬁ
+		file.write(reinterpret_cast<char*>(&bone.parent_),sizeof(bone.parent_));
+
+		// éqindexÇèëÇ´çûÇﬁ
 		size = static_cast<std::uint32_t>(bone.children.size());
 		file.write(reinterpret_cast<char*>(&size), sizeof(size));
-		file.write(reinterpret_cast<char*>(bone.children.data()), sizeof(Bone) * size);
+		if (size != 0u)
+		{
+			file.write(reinterpret_cast<char*>(bone.children.data()), sizeof(bone.children[0]) * size);
+		}
 	}
 
 }
@@ -304,34 +311,23 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 
 }
 
-void LoadBone(tinygltf::Model& model, int idx,std::vector<Bone>& bones, std::unordered_map<std::string, int>& nameTbl)
+void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::unordered_map<std::string, int>& nameTbl)
 {
 	//bones[idx].children.resize(model.nodes[idx].children.size());
 	auto nodeIdx = model.skins[0].joints[idx];
 	bones[idx].name_ = model.nodes[nodeIdx].name;
-	Eugene::Vector3 pos{ 
-		-static_cast<float>(model.nodes[nodeIdx].translation[0]),
-		static_cast<float>(model.nodes[nodeIdx].translation[1]),
-		static_cast<float>(model.nodes[nodeIdx].translation[2]) 
-	};
-
-
-	Eugene::Quaternion q{ 
-		-static_cast<float>(model.nodes[nodeIdx].rotation[0]) ,
-		static_cast<float>(model.nodes[nodeIdx].rotation[1] ),
-		static_cast<float>(model.nodes[nodeIdx].rotation[2]) ,
-		-static_cast<float>(model.nodes[nodeIdx].rotation[3])
-	};
-	
-	Eugene::GetTransformMatrix(bones[idx].matrix_, q, pos, { 1.0f,1.0f,1.0f });
-
-	for (int i = 0; i < model.nodes[nodeIdx].children.size(); i++)
+	for (auto& child: model.nodes[nodeIdx].children)
 	{
-		auto child = model.nodes[nodeIdx].children[i];
+		
 		if (nameTbl.contains(model.nodes[child].name))
 		{
-			bones[idx].children.push_back(nameTbl[model.nodes[child].name]);
-			LoadBone(model, bones[idx].children[i], bones, nameTbl);
+			auto itr = std::find(bones[idx].children.begin(), bones[idx].children.end(), nameTbl[model.nodes[child].name]);
+			if (itr == bones[idx].children.end())
+			{
+				bones[idx].children.push_back(nameTbl[model.nodes[child].name]);
+				bones[nameTbl[model.nodes[child].name]].parent_ = idx;
+				LoadBone(model, nameTbl[model.nodes[child].name], bones, nameTbl);
+			}
 		}
 	}
 }
@@ -431,6 +427,7 @@ void LoadSkeltalGltf(const std::string& path)
 		std::unordered_map<std::string, int> map;
 		std::vector<Bone> bones;
 		bones.resize(skin.joints.size());
+		std::vector<Eugene::Matrix4x4> matrixs(skin.joints.size());
 		map.reserve(skin.joints.size());
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
@@ -439,9 +436,19 @@ void LoadSkeltalGltf(const std::string& path)
 
 		for (auto& joint : skin.joints)
 		{
-			LoadBone(model, map[model.nodes[joint].name],bones,map);
+			LoadBone(model,map[model.nodes[joint].name],bones,map);
 		}
-		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
+
+		for (auto& b : bones)
+		{
+			DebugLog(b.name_);
+			for (auto& c : b.children)
+			{
+				DebugLog("-" + bones[c].name_);
+			}
+		}
+
+		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone",bones);
 	}
 }
 
