@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include "EugeneLib/Include/Graphics/IndexView.h"
 
+#include "EugeneLib/Include/ThirdParty/DirectXMath/DirectXMath.h"
+
 #include "EugeneLib/Include/Math/Geometry.h"
 
 #define __STDC_LIB_EXT1__
@@ -39,13 +41,17 @@ struct SkeletalGltfVertex
 	Eugene::Vector3 tan;
 	Eugene::Vector2 uv;
 	std::uint16_t joint[4];
-	float weight[4];
+	Eugene::Vector3 weight;
 };
 
 struct Bone
 {
 	std::string name_;
 	int parent_ = -1;
+	Eugene::Vector3 offset_;
+	Eugene::Quaternion q_;
+	Eugene::Matrix4x4 transform_;
+	Eugene::Matrix4x4 inverseMatrix;
 	std::vector<int> children;
 };
 
@@ -194,6 +200,15 @@ void ExportBone(const std::filesystem::path& path, std::vector<Bone>& bones)
 		// 親Indexを書き込む
 		file.write(reinterpret_cast<char*>(&bone.parent_),sizeof(bone.parent_));
 
+		file.write(reinterpret_cast<char*>(&bone.offset_), sizeof(bone.offset_));
+
+		file.write(reinterpret_cast<char*>(&bone.q_), sizeof(bone.q_));
+
+		file.write(reinterpret_cast<char*>(&bone.transform_), sizeof(bone.transform_));
+
+		file.write(reinterpret_cast<char*>(&bone.inverseMatrix), sizeof(bone.inverseMatrix));
+
+
 		// 子indexを書き込む
 		size = static_cast<std::uint32_t>(bone.children.size());
 		file.write(reinterpret_cast<char*>(&size), sizeof(size));
@@ -316,6 +331,38 @@ void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::uno
 	//bones[idx].children.resize(model.nodes[idx].children.size());
 	auto nodeIdx = model.skins[0].joints[idx];
 	bones[idx].name_ = model.nodes[nodeIdx].name;
+
+	
+	Eugene::Vector3 pos{
+		static_cast<float>(model.nodes[nodeIdx].translation[1]),
+		static_cast<float>(model.nodes[nodeIdx].translation[2]),
+		static_cast<float>(model.nodes[nodeIdx].translation[0])
+		
+	};
+
+	Eugene::Vector3 scale{1.0f,1.0f,1.0f};
+
+	if (!model.nodes[nodeIdx].scale.empty())
+	{
+		scale = { static_cast<float>(model.nodes[nodeIdx].scale[1]),
+		static_cast<float>(model.nodes[nodeIdx].scale[2]),
+		static_cast<float>(model.nodes[nodeIdx].scale[0]) };
+	}
+
+	
+	Eugene::Quaternion q{
+		static_cast<float>(model.nodes[nodeIdx].rotation[3]),
+		-static_cast<float>(model.nodes[nodeIdx].rotation[2]),
+		static_cast<float>(model.nodes[nodeIdx].rotation[1]),
+		-static_cast<float>(model.nodes[nodeIdx].rotation[0])
+	};
+	
+	auto rot = q.ToEuler();
+	rot.x = Eugene::Rad2Deg(rot.x);
+	rot.y = Eugene::Rad2Deg(rot.y);
+	rot.z = Eugene::Rad2Deg(rot.z);
+	bones[idx].offset_ = pos;
+	bones[idx].q_ = q;
 	for (auto& child: model.nodes[nodeIdx].children)
 	{
 		
@@ -332,6 +379,50 @@ void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::uno
 	}
 }
 
+void SetOffset(Bone& b, const Eugene::Vector3& offset,std::vector<Bone>& bones)
+{
+	b.offset_ = offset + b.offset_;
+	for (int i = 0; i < b.children.size(); i++)
+	{
+		SetOffset(bones[b.children[i]], b.offset_, bones);
+	}
+}
+
+void SetLoacalTransformMatrix(Bone& b, std::vector<Bone>& bones)
+{
+	Eugene::Vector3 offset = b.offset_;
+	Eugene::Quaternion q;
+	Eugene::Matrix4x4 rot;
+	if (b.parent_ != -1)
+	{
+		offset = bones[b.parent_].offset_ - b.offset_;
+	}
+	q = b.q_;
+	Eugene::GetTranslateMatrix(b.transform_, offset);
+	Eugene::GetRotationMatrix(rot,q);
+
+	// 回転と移動をかけてトランスフォーム行列作成
+	Eugene::Mul(b.transform_, rot, b.transform_);
+	for (int i = 0; i < b.children.size(); i++)
+	{
+		SetLoacalTransformMatrix(bones[b.children[i]], bones);
+	}
+
+}
+
+void SetInverseBindMatrix(Bone& b, Eugene::Matrix4x4& matrix, std::vector<Bone>& bones)
+{
+	Eugene::Matrix4x4 worldMatrix;
+	Eugene::Mul(worldMatrix, matrix, b.transform_);
+	b.inverseMatrix = worldMatrix;
+	Eugene::Inverse(b.inverseMatrix);
+
+	for (int i = 0; i < b.children.size(); i++)
+	{
+		SetInverseBindMatrix(bones[b.children[i]], worldMatrix, bones);
+	}
+}
+
 void LoadSkeltalGltf(const std::string& path)
 {
 	tinygltf::TinyGLTF gltf;
@@ -339,6 +430,61 @@ void LoadSkeltalGltf(const std::string& path)
 	std::string err;
 	std::string warn;
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
+	std::vector<Bone> bones;
+	for (auto& skin : model.skins)
+	{
+		DebugLog(skin.name);
+		std::unordered_map<std::string, int> map;
+		
+		bones.resize(skin.joints.size());
+		std::vector<Eugene::Matrix4x4> matrixs(skin.joints.size());
+		map.reserve(skin.joints.size());
+		for (int i = 0; i < skin.joints.size(); i++)
+		{
+			map.emplace(model.nodes[skin.joints[i]].name, i);
+		}
+
+		for (auto& joint : skin.joints)
+		{
+			LoadBone(model, map[model.nodes[joint].name], bones, map);
+		}
+
+		auto& accsessor = model.accessors[skin.inverseBindMatrices];
+		auto& bufferView = model.bufferViews[accsessor.bufferView];
+		auto& buffer = model.buffers[bufferView.buffer];
+		auto p = reinterpret_cast<Eugene::Matrix4x4*>(&buffer.data[accsessor.byteOffset + bufferView.byteOffset]);
+		
+		std::vector<Eugene::Matrix4x4> inverseMat_(accsessor.count);
+		std::copy_n(p, accsessor.count, inverseMat_.data());
+
+
+		
+		for (int i = 0; i < skin.joints.size(); i++)
+		{
+			DirectX::XMVECTOR scale, trans, qrot;
+			DirectX::XMMatrixDecompose(&scale, &qrot, &trans, DirectX::XMMatrixInverse(&scale, DirectX::XMLoadFloat4x4(&inverseMat_[i])));
+			bones[i].offset_ = { -trans.m128_f32[0] , trans.m128_f32[1] , trans.m128_f32[2] };
+
+			DirectX::XMFLOAT4 q;
+			DirectX::XMStoreFloat4(&q, DirectX::XMQuaternionInverse(qrot));
+			bones[i].q_ = { -q.x,q.y, -q.z, q.w };
+		}
+
+		//SetOffset(bones[0],Eugene::zeroVector3<float>, bones);
+		constexpr auto a = 0.5f / 100.0f;
+	/*	for (auto& b : bones)
+		{
+			b.offset_ = b.offset_ / 100.0f;
+		}*/
+
+		SetLoacalTransformMatrix(bones[0], bones);
+
+		Eugene::Matrix4x4 idMat;
+		Eugene::Identity(idMat);
+		SetInverseBindMatrix(bones[0], idMat, bones);
+
+		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
+	}
 
 
 	for (auto& m : model.meshes)
@@ -383,15 +529,25 @@ void LoadSkeltalGltf(const std::string& path)
 				vertex[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
 				vertex[i].tan = Eugene::Vector3{ -tan[i * 3 + 0],tan[i * 3 + 1],tan[i * 3 + 2] };
 				vertex[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
-				vertex[i].joint[0] = joint[i * 4 + 0];
-				vertex[i].joint[1] = joint[i * 4 + 1];
-				vertex[i].joint[2] = joint[i * 4 + 2];
-				vertex[i].joint[3] = joint[i * 4 + 3];
+				vertex[i].joint[0] = static_cast<std::uint16_t>(joint[i * 4 + 0]);
+				vertex[i].joint[1] = static_cast<std::uint16_t>(joint[i * 4 + 1]);
+				vertex[i].joint[2] = static_cast<std::uint16_t>(joint[i * 4 + 2]);
+				vertex[i].joint[3] = static_cast<std::uint16_t>(joint[i * 4 + 3]);
 
-				vertex[i].weight[0] = weight[i * 4 + 0];
-				vertex[i].weight[1] = weight[i * 4 + 1];
-				vertex[i].weight[2] = weight[i * 4 + 2];
-				vertex[i].weight[3] = weight[i * 4 + 3];
+				vertex[i].weight.x = std::max(weight[i * 4 + 0],0.0f);
+				vertex[i].weight.y = std::max(weight[i * 4 + 1],0.0f);
+				vertex[i].weight.z = std::max(weight[i * 4 + 2],0.0f);
+
+				//DebugLog("bone_x={0:}y={1:}z={2:}w={3:}", vertex[i].joint[0], vertex[i].joint[1], vertex[i].joint[2], vertex[i].joint[3]);
+				DebugLog("weight_x={0:}y={1:}z={2:}w={3:}", vertex[i].weight.x, vertex[i].weight.y, vertex[i].weight.z,1.0f - (vertex[i].weight.x + vertex[i].weight.y + vertex[i].weight.z));
+			/*	auto inverseVal = 1.0f / (bones[vertex[i].joint[0]].offset_ - vertex[i].pos).Magnitude();
+				inverseVal += 1.0f / (bones[vertex[i].joint[1]].offset_ - vertex[i].pos).Magnitude();
+				inverseVal += 1.0f / (bones[vertex[i].joint[2]].offset_ - vertex[i].pos).Magnitude();
+				inverseVal += 1.0f / (bones[vertex[i].joint[3]].offset_ - vertex[i].pos).Magnitude();
+
+				vertex[i].weight.x = (1.0f / (bones[vertex[i].joint[0]].offset_ - vertex[i].pos).Magnitude()) / inverseVal;
+				vertex[i].weight.y = (1.0f / (bones[vertex[i].joint[1]].offset_ - vertex[i].pos).Magnitude()) / inverseVal;
+				vertex[i].weight.z = (1.0f / (bones[vertex[i].joint[2]].offset_ - vertex[i].pos).Magnitude()) / inverseVal;*/
 			}
 
 			auto& accessor = model.accessors[primitive.indices];
@@ -421,35 +577,7 @@ void LoadSkeltalGltf(const std::string& path)
 		ExportMaterial("./" + material.name + ".mat", material, model, "SkeletalMesh");
 	}
 
-	for (auto& skin : model.skins)
-	{
-		DebugLog(skin.name);
-		std::unordered_map<std::string, int> map;
-		std::vector<Bone> bones;
-		bones.resize(skin.joints.size());
-		std::vector<Eugene::Matrix4x4> matrixs(skin.joints.size());
-		map.reserve(skin.joints.size());
-		for (int i = 0; i < skin.joints.size(); i++)
-		{
-			map.emplace(model.nodes[skin.joints[i]].name,i);
-		}
-
-		for (auto& joint : skin.joints)
-		{
-			LoadBone(model,map[model.nodes[joint].name],bones,map);
-		}
-
-		for (auto& b : bones)
-		{
-			DebugLog(b.name_);
-			for (auto& c : b.children)
-			{
-				DebugLog("-" + bones[c].name_);
-			}
-		}
-
-		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone",bones);
-	}
+	
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
