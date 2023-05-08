@@ -351,10 +351,10 @@ void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::uno
 
 	
 	Eugene::Quaternion q{
-		static_cast<float>(model.nodes[nodeIdx].rotation[3]),
-		-static_cast<float>(model.nodes[nodeIdx].rotation[2]),
-		static_cast<float>(model.nodes[nodeIdx].rotation[1]),
-		-static_cast<float>(model.nodes[nodeIdx].rotation[0])
+		-static_cast<float>(model.nodes[nodeIdx].rotation[1]),
+		static_cast<float>(model.nodes[nodeIdx].rotation[2]),
+		-static_cast<float>(model.nodes[nodeIdx].rotation[3]),
+		static_cast<float>(model.nodes[nodeIdx].rotation[0])
 	};
 	
 	auto rot = q.ToEuler();
@@ -396,13 +396,41 @@ void SetLoacalTransformMatrix(Bone& b, std::vector<Bone>& bones)
 	if (b.parent_ != -1)
 	{
 		offset = bones[b.parent_].offset_ - b.offset_;
+		DirectX::XMVECTOR parent;
+		parent.m128_f32[0] = bones[b.parent_].q_.x;
+		parent.m128_f32[1] = bones[b.parent_].q_.y;
+		parent.m128_f32[2] = bones[b.parent_].q_.z;
+		parent.m128_f32[3] = bones[b.parent_].q_.w;
+		DirectX::XMVECTOR bQ;
+		bQ.m128_f32[0] = b.q_.x;
+		bQ.m128_f32[1] = b.q_.y;
+		bQ.m128_f32[2] = b.q_.z;
+		bQ.m128_f32[3] = b.q_.w;
+
+		auto bRelative = DirectX::XMQuaternionMultiply(DirectX::XMQuaternionInverse(parent), bQ);
+		DirectX::XMVECTOR axisAngle;
+		float angle;
+		DirectX::XMQuaternionToAxisAngle(&axisAngle,&angle,bRelative);
+
+		// 自身をワールド座標に変換する行列に対し親のワールド座標に戻す行列をかけ親からの相対的なトランスフォーム行列を作成する
+		DirectX::XMVECTOR tmpVec;
+		auto p =  DirectX::XMLoadFloat4x4(&bones[b.parent_].inverseMatrix);
+		auto world = DirectX::XMMatrixInverse(&tmpVec,DirectX::XMLoadFloat4x4(&b.inverseMatrix));
+		DirectX::XMStoreFloat4x4(&b.transform_,world * p);
 	}
-	q = b.q_;
+	else
+	{
+		// 親がいない場合自身のワールド座標に変換する行列が親からの相対的なトランスフォーム行列になる
+		DirectX::XMVECTOR tmpVec;
+		auto world = DirectX::XMMatrixInverse(&tmpVec, DirectX::XMLoadFloat4x4(&b.inverseMatrix));
+		DirectX::XMStoreFloat4x4(&b.transform_, world);
+	}
+	/*q = b.q_;
 	Eugene::GetTranslateMatrix(b.transform_, offset);
-	Eugene::GetRotationMatrix(rot,q);
+	Eugene::GetRotationMatrix(rot,q);*/
 
 	// 回転と移動をかけてトランスフォーム行列作成
-	Eugene::Mul(b.transform_, rot, b.transform_);
+	//Eugene::Mul(b.transform_, rot, b.transform_);
 	for (int i = 0; i < b.children.size(); i++)
 	{
 		SetLoacalTransformMatrix(bones[b.children[i]], bones);
@@ -468,6 +496,14 @@ void LoadSkeltalGltf(const std::string& path)
 			DirectX::XMFLOAT4 q;
 			DirectX::XMStoreFloat4(&q, DirectX::XMQuaternionInverse(qrot));
 			bones[i].q_ = { -q.x,q.y, -q.z, q.w };
+			qrot.m128_f32[0] = -qrot.m128_f32[0];
+			qrot.m128_f32[2] = -qrot.m128_f32[2];
+
+			// ボーンをワールド座標上に変換する行列
+			auto worldMatrix = DirectX::XMMatrixRotationQuaternion(DirectX::XMQuaternionInverse(qrot))* DirectX::XMMatrixTranslation(bones[i].offset_.x, bones[i].offset_.y, bones[i].offset_.z);
+
+			// ワールド座標にする行列の逆行列(逆バインド行列敵なの)にする
+			DirectX::XMStoreFloat4x4(&bones[i].inverseMatrix, DirectX::XMMatrixInverse(&scale,worldMatrix));
 		}
 
 		//SetOffset(bones[0],Eugene::zeroVector3<float>, bones);
@@ -481,7 +517,7 @@ void LoadSkeltalGltf(const std::string& path)
 
 		Eugene::Matrix4x4 idMat;
 		Eugene::Identity(idMat);
-		SetInverseBindMatrix(bones[0], idMat, bones);
+		//SetInverseBindMatrix(bones[0], idMat, bones);
 
 		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
 	}
