@@ -7,6 +7,9 @@
 #include <EugeneLib.h>
 #include <Common/Debug.h>
 #include <unordered_map>
+
+#include <fbxsdk.h>
+
 #include "EugeneLib/Include/Graphics/IndexView.h"
 
 #include "EugeneLib/Include/ThirdParty/DirectXMath/DirectXMath.h"
@@ -53,6 +56,7 @@ struct Bone
 	Eugene::Matrix4x4 transform_;
 	Eugene::Matrix4x4 inverseMatrix;
 	std::vector<int> children;
+	std::uint32_t index;
 };
 
 struct BoneHeader
@@ -390,47 +394,28 @@ void SetOffset(Bone& b, const Eugene::Vector3& offset,std::vector<Bone>& bones)
 
 void SetLoacalTransformMatrix(Bone& b, std::vector<Bone>& bones)
 {
-	Eugene::Vector3 offset = b.offset_;
-	Eugene::Quaternion q;
-	Eugene::Matrix4x4 rot;
+	DirectX::XMMATRIX parentMatrix = DirectX::XMMatrixIdentity();
+	DirectX::XMMATRIX worldMatrix = DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&b.inverseMatrix));
+	Eugene::Vector3 diff = b.offset_;
+	Eugene::Vector3 localOffset = b.offset_;
+	Eugene::Vector3 localRot = b.q_.ToEuler();
+
 	if (b.parent_ != -1)
 	{
-		offset = bones[b.parent_].offset_ - b.offset_;
-		DirectX::XMVECTOR parent;
-		parent.m128_f32[0] = bones[b.parent_].q_.x;
-		parent.m128_f32[1] = bones[b.parent_].q_.y;
-		parent.m128_f32[2] = bones[b.parent_].q_.z;
-		parent.m128_f32[3] = bones[b.parent_].q_.w;
-		DirectX::XMVECTOR bQ;
-		bQ.m128_f32[0] = b.q_.x;
-		bQ.m128_f32[1] = b.q_.y;
-		bQ.m128_f32[2] = b.q_.z;
-		bQ.m128_f32[3] = b.q_.w;
-
-		auto bRelative = DirectX::XMQuaternionMultiply(DirectX::XMQuaternionInverse(parent), bQ);
-		DirectX::XMVECTOR axisAngle;
-		float angle;
-		DirectX::XMQuaternionToAxisAngle(&axisAngle,&angle,bRelative);
-
-		// 自身をワールド座標に変換する行列に対し親のワールド座標に戻す行列をかけ親からの相対的なトランスフォーム行列を作成する
-		DirectX::XMVECTOR tmpVec;
-		auto p =  DirectX::XMLoadFloat4x4(&bones[b.parent_].inverseMatrix);
-		auto world = DirectX::XMMatrixInverse(&tmpVec,DirectX::XMLoadFloat4x4(&b.inverseMatrix));
-		DirectX::XMStoreFloat4x4(&b.transform_,world * p);
+		parentMatrix = DirectX::XMLoadFloat4x4(&bones[b.parent_].inverseMatrix);
+		diff = b.offset_ - bones[b.parent_].offset_;
+		localOffset = b.offset_ - bones[b.parent_].offset_;
+		localRot = b.q_.ToEuler() - bones[b.parent_].q_.ToEuler();
 	}
-	else
-	{
-		// 親がいない場合自身のワールド座標に変換する行列が親からの相対的なトランスフォーム行列になる
-		DirectX::XMVECTOR tmpVec;
-		auto world = DirectX::XMMatrixInverse(&tmpVec, DirectX::XMLoadFloat4x4(&b.inverseMatrix));
-		DirectX::XMStoreFloat4x4(&b.transform_, world);
-	}
-	/*q = b.q_;
-	Eugene::GetTranslateMatrix(b.transform_, offset);
-	Eugene::GetRotationMatrix(rot,q);*/
+	
+	
 
-	// 回転と移動をかけてトランスフォーム行列作成
-	//Eugene::Mul(b.transform_, rot, b.transform_);
+	DirectX::XMStoreFloat4x4(&b.transform_, parentMatrix * worldMatrix);
+
+	DirectX::XMStoreFloat4x4(&b.transform_, 
+		DirectX::XMMatrixRotationRollPitchYaw(localRot.x, localRot.y, localRot.z) * DirectX::XMMatrixTranslation(localOffset.x, localOffset.y, localOffset.z));
+
+
 	for (int i = 0; i < b.children.size(); i++)
 	{
 		SetLoacalTransformMatrix(bones[b.children[i]], bones);
@@ -490,24 +475,29 @@ void LoadSkeltalGltf(const std::string& path)
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
 			DirectX::XMVECTOR scale, trans, qrot;
-			DirectX::XMMatrixDecompose(&scale, &qrot, &trans, DirectX::XMMatrixInverse(&scale, DirectX::XMLoadFloat4x4(&inverseMat_[i])));
+			auto result = DirectX::XMMatrixDecompose(&scale, &qrot, &trans, DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&inverseMat_[i])));
 			bones[i].offset_ = { -trans.m128_f32[0] , trans.m128_f32[1] , trans.m128_f32[2] };
-
+			if (!result)
+			{
+				throw std::exception{};
+			}
 			DirectX::XMFLOAT4 q;
-			DirectX::XMStoreFloat4(&q, DirectX::XMQuaternionInverse(qrot));
-			bones[i].q_ = { -q.x,q.y, -q.z, q.w };
+
+			// 右手座標系→左手座標系に
+			DirectX::XMStoreFloat4(&q, (qrot));
+
+			bones[i].q_ = { -q.x,q.y, q.z, -q.w };
 			qrot.m128_f32[0] = -qrot.m128_f32[0];
-			qrot.m128_f32[2] = -qrot.m128_f32[2];
+			qrot.m128_f32[3] = -qrot.m128_f32[3];
 
 			// ボーンをワールド座標上に変換する行列
-			auto worldMatrix = DirectX::XMMatrixRotationQuaternion(DirectX::XMQuaternionInverse(qrot))* DirectX::XMMatrixTranslation(bones[i].offset_.x, bones[i].offset_.y, bones[i].offset_.z);
+			auto worldMatrix = DirectX::XMMatrixRotationQuaternion(qrot)* DirectX::XMMatrixTranslation(bones[i].offset_.x, bones[i].offset_.y, bones[i].offset_.z);
 
 			// ワールド座標にする行列の逆行列(逆バインド行列敵なの)にする
-			DirectX::XMStoreFloat4x4(&bones[i].inverseMatrix, DirectX::XMMatrixInverse(&scale,worldMatrix));
+			DirectX::XMStoreFloat4x4(&bones[i].inverseMatrix, DirectX::XMMatrixInverse(nullptr,worldMatrix));
 		}
 
 		//SetOffset(bones[0],Eugene::zeroVector3<float>, bones);
-		constexpr auto a = 0.5f / 100.0f;
 	/*	for (auto& b : bones)
 		{
 			b.offset_ = b.offset_ / 100.0f;
@@ -515,14 +505,11 @@ void LoadSkeltalGltf(const std::string& path)
 
 		SetLoacalTransformMatrix(bones[0], bones);
 
-		Eugene::Matrix4x4 idMat;
-		Eugene::Identity(idMat);
-		//SetInverseBindMatrix(bones[0], idMat, bones);
-
+		
 		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
 	}
 
-
+	int count = 0;
 	for (auto& m : model.meshes)
 	{
 		for (int p = 0; p < m.primitives.size(); p++)
@@ -569,13 +556,23 @@ void LoadSkeltalGltf(const std::string& path)
 				vertex[i].joint[1] = static_cast<std::uint16_t>(joint[i * 4 + 1]);
 				vertex[i].joint[2] = static_cast<std::uint16_t>(joint[i * 4 + 2]);
 				vertex[i].joint[3] = static_cast<std::uint16_t>(joint[i * 4 + 3]);
-
+				for (auto j : vertex[i].joint)
+				{
+					if (j == 0u)
+					{
+						count++;
+					}
+				}
 				vertex[i].weight.x = std::max(weight[i * 4 + 0],0.0f);
 				vertex[i].weight.y = std::max(weight[i * 4 + 1],0.0f);
 				vertex[i].weight.z = std::max(weight[i * 4 + 2],0.0f);
 
+				vertex[i].weight.x = weight[i * 4 + 0];
+				vertex[i].weight.y = weight[i * 4 + 1];
+				vertex[i].weight.z = weight[i * 4 + 2];
+
 				//DebugLog("bone_x={0:}y={1:}z={2:}w={3:}", vertex[i].joint[0], vertex[i].joint[1], vertex[i].joint[2], vertex[i].joint[3]);
-				DebugLog("weight_x={0:}y={1:}z={2:}w={3:}", vertex[i].weight.x, vertex[i].weight.y, vertex[i].weight.z,1.0f - (vertex[i].weight.x + vertex[i].weight.y + vertex[i].weight.z));
+				DebugLog("weight_x={0:}y={1:}z={2:}w={3:}", vertex[i].weight.x, vertex[i].weight.y, vertex[i].weight.z,1.0f - (vertex[i].weight.x - vertex[i].weight.y - vertex[i].weight.z));
 			/*	auto inverseVal = 1.0f / (bones[vertex[i].joint[0]].offset_ - vertex[i].pos).Magnitude();
 				inverseVal += 1.0f / (bones[vertex[i].joint[1]].offset_ - vertex[i].pos).Magnitude();
 				inverseVal += 1.0f / (bones[vertex[i].joint[2]].offset_ - vertex[i].pos).Magnitude();
@@ -657,6 +654,195 @@ void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
 	mesh.indexBuffer->UnMap();
 }
 
+void TestCalcWorldMatrix(
+	fbxsdk::FbxAMatrix& parentMatrix,
+	Bone& bone, 
+	std::vector<Bone>& bones, 
+	std::vector<fbxsdk::FbxAMatrix>& bindMatrix,
+	std::vector<fbxsdk::FbxAMatrix>& transformMatrix
+)
+{
+	auto worldMatrix = parentMatrix * transformMatrix[bone.index];
+
+	auto bindMat = bindMatrix[bone.index].Inverse();
+
+	for (int i = 0; i < bone.children.size(); i++)
+	{
+		TestCalcWorldMatrix(worldMatrix, bones[bone.children[i]], bones, bindMatrix, transformMatrix);
+	}
+
+}
+
+void LoadFbxMesh(fbxsdk::FbxMesh* mesh, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
+{
+	auto polygonCount = mesh->GetPolygonCount();
+	int vertexCount = polygonCount * 3;
+	
+	auto ctrlP = mesh->GetControlPoints();
+
+	
+
+	auto dCount = mesh->GetDeformerCount();
+	if (dCount <= 0)
+	{
+		return;
+	}
+	auto skin = static_cast<FbxSkin*>(mesh->GetDeformer(0, FbxDeformer::eSkin));
+	int clusterCount = skin->GetClusterCount();
+	std::vector<FbxAMatrix> bindMatrixVec(clusterCount);
+	std::vector<FbxAMatrix> transformVec(clusterCount);
+	std::unordered_map<std::string, int> nameTbl;
+	nameTbl.reserve(clusterCount);
+	bones.resize(clusterCount);
+
+	
+	// ボーンを読み込む処理
+	for (int i = 0; i < clusterCount; i++) 
+	{
+		auto cluster = skin->GetCluster(i);
+
+		auto boneCount  = cluster->GetControlPointIndicesCount();
+		std::vector<float> weightes(boneCount);
+		std::vector<std::uint16_t> idces(boneCount);
+
+		std::copy_n(cluster->GetControlPointIndices(), boneCount,idces.data());
+		std::copy_n(cluster->GetControlPointWeights(), boneCount, weightes.data());
+		
+		nameTbl[cluster->GetName()] = i;
+		bones[i].name_ = cluster->GetName();
+
+		fbxsdk::FbxAMatrix bindMatrix;
+		cluster->GetTransformMatrix(bindMatrix);
+
+		FbxAMatrix invBindMatrix;
+		cluster->GetTransformLinkMatrix(invBindMatrix);
+		invBindMatrix = invBindMatrix.Inverse();
+
+		FbxAMatrix boneOffset = invBindMatrix ;
+		auto trans = boneOffset.GetT();
+		auto scale = boneOffset.GetS();
+		auto q = boneOffset.GetQ();
+		trans /= 100.0f;
+		boneOffset.SetT(trans);
+		boneOffset.SetS(FbxVector4{ 1,1,1 });
+		bindMatrixVec[i] = boneOffset;
+		bones[i].index = i;
+		auto node = cluster->GetLink();
+		if (node != nullptr)
+		{
+			FbxAMatrix transform;
+			cluster->GetTransformMatrix(transform);
+			auto parent = node->GetParent();
+			if (parent != nullptr)
+			{
+				if (nameTbl.contains(parent->GetName()))
+				{
+					bones[i].parent_ = nameTbl[parent->GetName()];
+					bones[bones[i].parent_].children.push_back(i);
+				}
+			}
+		}
+	}
+
+	for (int i = 0; i < clusterCount; i++)
+	{
+		transformVec[i] = bindMatrixVec[i].Inverse();
+		if (bones[i].parent_ != -1)
+		{
+			transformVec[i] = bindMatrixVec[bones[i].parent_] * bindMatrixVec[i].Inverse();
+		}
+	}
+
+	FbxAMatrix identity;
+	identity.SetIdentity();
+	TestCalcWorldMatrix(identity, bones[0], bones, bindMatrixVec, transformVec);
+	for (int i = 0; i < clusterCount; i++)
+	{
+		for (int y = 0; y < 4; y++)
+		{
+			for (int x = 0; x < 4; x++)
+			{
+				bones[i].inverseMatrix.m[y][x] = bindMatrixVec[i].Get(y,x);
+				bones[i].transform_.m[y][x] = transformVec[i].Get(y, x);
+			}
+		}
+	}
+
+
+
+}
+
+
+
+void LoadFbxNode(fbxsdk::FbxNode* node, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
+{
+	auto mesh = node->GetMesh();
+	if (mesh != nullptr)
+	{
+		// メッシュ処理
+		LoadFbxMesh(mesh, bones, meshList);
+	}
+
+	auto attri = node->GetNodeAttribute();
+	if (attri != nullptr)
+	{
+		if (attri->GetAttributeType() == fbxsdk::FbxNodeAttribute::eSkeleton)
+		{
+			// ボーンの時の処理
+			auto parent = node->GetParent();
+			FbxAMatrix transform = node->EvaluateGlobalTransform();
+			if (parent != nullptr)
+			{
+				auto parentTransform = parent->EvaluateGlobalTransform();
+				transform = parentTransform.Inverse() * transform;
+			}
+
+			auto trans = transform.GetT();
+			auto q = transform.GetQ();
+
+		}
+	}
+	
+
+	auto count = node->GetChildCount();
+	for (int i = 0; i < count; i++)
+	{
+		LoadFbxNode(node->GetChild(i),bones, meshList);
+	}
+}
+
+
+
+void LoadSkeletalFbx(const std::filesystem::path& path)
+{
+	fbxsdk::FbxManager* manager = fbxsdk::FbxManager::Create();
+	FbxIOSettings* ios = FbxIOSettings::Create(manager, IOSROOT);
+	manager->SetIOSettings(ios);
+
+	// FBXファイルの読み込み
+	FbxImporter* importer = FbxImporter::Create(manager, "");
+	bool success = importer->Initialize(path.string().c_str(), -1, manager->GetIOSettings());
+	if (!success) {
+		// エラー処理
+		return;
+	}
+
+	FbxScene* scene = FbxScene::Create(manager, "My Scene");
+	importer->Import(scene);
+
+	std::vector<Bone> bones;
+	std::deque<Mesh> meshList;
+	auto root = scene->GetRootNode();
+	if (root != nullptr)
+	{
+		LoadFbxNode(root,bones,meshList);
+	}
+	ExportBone(path.string().substr(0, path.string().find_last_of(".")) + ".bone", bones);
+	scene->Destroy();
+	importer->Destroy();
+	manager->Destroy();
+
+}
 
 int main(int argc, char* argv[])
 {
@@ -717,6 +903,9 @@ int main(int argc, char* argv[])
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
 	LoadSkeltalGltf("Swat.gltf");
+
+	LoadSkeletalFbx("Swat.fbx");
+
 	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
 	{

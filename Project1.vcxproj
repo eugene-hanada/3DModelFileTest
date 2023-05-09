@@ -71,8 +71,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)EugeneLib\Include;$(IncludePath)</IncludePath>
-    <LibraryPath>$(ProjectDir)\EugeneLib\Debug\;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(FBXSDK_DIR)\include;$(ProjectDir)EugeneLib\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(FBXSDK_DIR)\lib\vs2022\x64\Debug;$(ProjectDir)\EugeneLib\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -114,7 +114,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>EugeneLib.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>EugeneLib.lib;libfbxsdk-mt.lib;libxml2-mt.lib;zlib-mt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
