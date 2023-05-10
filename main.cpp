@@ -44,7 +44,7 @@ struct SkeletalGltfVertex
 	Eugene::Vector3 tan;
 	Eugene::Vector2 uv;
 	std::uint16_t joint[4];
-	Eugene::Vector3 weight;
+	float weight[4]{0.0f,0.0f,0.0f,0.0f};
 };
 
 struct Bone
@@ -125,6 +125,24 @@ struct Mesh
 	std::unique_ptr<Eugene::IndexView> indexView;
 	std::string materialName;
 };
+
+DirectX::XMMATRIX ConvertYToZFront(const DirectX::XMMATRIX& yRotationMatrix)
+{
+	// Yé≤é¸ÇËÇÃâÒì]çsóÒÇ©ÇÁYé≤ÇÃâÒì]äpìxÇéÊìæ
+	DirectX::XMFLOAT4X4 yMatrix;
+	DirectX::XMStoreFloat4x4(&yMatrix, yRotationMatrix);
+
+	float yRotationAngle = atan2f(yMatrix._13, yMatrix._33);
+
+	// Zé≤é¸ÇËÇÃâÒì]äpìxÇåvéZ
+	float zRotationAngle = DirectX::XM_PIDIV2 - yRotationAngle;
+
+	// Zé≤é¸ÇËÇÃâÒì]çsóÒÇçÏê¨
+	DirectX::XMMATRIX zRotationMatrix = DirectX::XMMatrixRotationZ(zRotationAngle);
+
+	// Yé≤é¸ÇËÇÃâÒì]çsóÒÇ∆Zé≤é¸ÇËÇÃâÒì]çsóÒÇèáî‘Ç…ä|ÇØçáÇÌÇπÇƒï‘Ç∑
+	return DirectX::XMMatrixMultiply(yRotationMatrix, zRotationMatrix);
+}
 
 void ExportMesh(const std::filesystem::path& path, std::vector<GltfVertex>& vert,std::vector<std::uint16_t>& ind)
 {
@@ -410,10 +428,10 @@ void SetLoacalTransformMatrix(Bone& b, std::vector<Bone>& bones)
 	
 	
 
-	DirectX::XMStoreFloat4x4(&b.transform_, parentMatrix * worldMatrix);
+	DirectX::XMStoreFloat4x4(&b.transform_, worldMatrix * parentMatrix);
 
-	DirectX::XMStoreFloat4x4(&b.transform_, 
-		DirectX::XMMatrixRotationRollPitchYaw(localRot.x, localRot.y, localRot.z) * DirectX::XMMatrixTranslation(localOffset.x, localOffset.y, localOffset.z));
+	/*DirectX::XMStoreFloat4x4(&b.transform_, 
+		DirectX::XMMatrixRotationRollPitchYaw(localRot.x, localRot.y, localRot.z) * DirectX::XMMatrixTranslation(localOffset.x, localOffset.y, localOffset.z));*/
 
 
 	for (int i = 0; i < b.children.size(); i++)
@@ -484,11 +502,16 @@ void LoadSkeltalGltf(const std::string& path)
 			DirectX::XMFLOAT4 q;
 
 			// âEéËç¿ïWånÅ®ç∂éËç¿ïWånÇ…
-			DirectX::XMStoreFloat4(&q, (qrot));
-
-			bones[i].q_ = { -q.x,q.y, q.z, -q.w };
 			qrot.m128_f32[0] = -qrot.m128_f32[0];
 			qrot.m128_f32[3] = -qrot.m128_f32[3];
+			
+			DirectX::XMMatrixDecompose(&scale,&qrot,&trans, ConvertYToZFront(DirectX::XMMatrixRotationQuaternion(qrot)));
+			DirectX::XMStoreFloat4(&q, (qrot));
+
+
+
+			bones[i].q_ = { q.x,q.y, q.z, q.w };
+			
 
 			// É{Å[ÉìÇÉèÅ[ÉãÉhç¿ïWè„Ç…ïœä∑Ç∑ÇÈçsóÒ
 			auto worldMatrix = DirectX::XMMatrixRotationQuaternion(qrot)* DirectX::XMMatrixTranslation(bones[i].offset_.x, bones[i].offset_.y, bones[i].offset_.z);
@@ -520,28 +543,28 @@ void LoadSkeltalGltf(const std::string& path)
 			auto& tanAccessor = model.accessors[primitive.attributes["TANGENT"]];
 			auto& uvAccessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
 			auto& boneAccessor = model.accessors[primitive.attributes["JOINTS_0"]];
-			auto& weighisAccessor = model.accessors[primitive.attributes["WEIGHIS_0"]];
+			auto& weightsAccessor = model.accessors[primitive.attributes["WEIGHTS_0"]];
 
 			auto& posBufferView = model.bufferViews[posAccsessor.bufferView];
 			auto& normBufferView = model.bufferViews[normAccessor.bufferView];
 			auto& tanBufferView = model.bufferViews[tanAccessor.bufferView];
 			auto& uvBufferView = model.bufferViews[uvAccessor.bufferView];
 			auto& boneBufferView = model.bufferViews[boneAccessor.bufferView];
-			auto& weighisBufferView = model.bufferViews[weighisAccessor.bufferView];
+			auto& weightsBufferView = model.bufferViews[weightsAccessor.bufferView];
 
 			auto& posBuffer = model.buffers[posBufferView.buffer];
 			auto& normBuffer = model.buffers[normBufferView.buffer];
 			auto& tanBuffer = model.buffers[tanBufferView.buffer];
 			auto& uvBuffer = model.buffers[uvBufferView.buffer];
 			auto& boneBuffer = model.buffers[boneBufferView.buffer];
-			auto& weighisBuffer = model.buffers[weighisBufferView.buffer];
+			auto& weighisBuffer = model.buffers[weightsBufferView.buffer];
 
 			auto pos = reinterpret_cast<float*>(&posBuffer.data[posBufferView.byteOffset + posAccsessor.byteOffset]);
 			auto norm = reinterpret_cast<float*>(&normBuffer.data[normBufferView.byteOffset + normAccessor.byteOffset]);
 			auto tan = reinterpret_cast<float*>(&tanBuffer.data[tanBufferView.byteOffset + tanAccessor.byteOffset]);
 			auto uv = reinterpret_cast<float*>(&uvBuffer.data[uvBufferView.byteOffset + uvAccessor.byteOffset]);
 			auto joint = reinterpret_cast<std::uint8_t*>(&boneBuffer.data[boneBufferView.byteOffset + boneAccessor.byteOffset]);
-			auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weighisBufferView.byteOffset + weighisAccessor.byteOffset]);
+			auto weight = reinterpret_cast<float*>(&weighisBuffer.data[weightsBufferView.byteOffset + weightsAccessor.byteOffset]);
 
 			std::vector<SkeletalGltfVertex> vertex;
 			vertex.resize(posAccsessor.count);
@@ -563,16 +586,15 @@ void LoadSkeltalGltf(const std::string& path)
 						count++;
 					}
 				}
-				vertex[i].weight.x = std::max(weight[i * 4 + 0],0.0f);
-				vertex[i].weight.y = std::max(weight[i * 4 + 1],0.0f);
-				vertex[i].weight.z = std::max(weight[i * 4 + 2],0.0f);
-
-				vertex[i].weight.x = weight[i * 4 + 0];
-				vertex[i].weight.y = weight[i * 4 + 1];
-				vertex[i].weight.z = weight[i * 4 + 2];
+				
+				
+				vertex[i].weight[0] = weight[i * 4 + 0];
+				vertex[i].weight[1] = weight[i * 4 + 1];
+				vertex[i].weight[2] = weight[i * 4 + 2];
+				vertex[i].weight[3] = weight[i * 4 + 3];
 
 				//DebugLog("bone_x={0:}y={1:}z={2:}w={3:}", vertex[i].joint[0], vertex[i].joint[1], vertex[i].joint[2], vertex[i].joint[3]);
-				DebugLog("weight_x={0:}y={1:}z={2:}w={3:}", vertex[i].weight.x, vertex[i].weight.y, vertex[i].weight.z,1.0f - (vertex[i].weight.x - vertex[i].weight.y - vertex[i].weight.z));
+				//DebugLog("weight_x={0:}y={1:}z={2:}w={3:}", vertex[i].weight.x, vertex[i].weight.y, vertex[i].weight.z,1.0f - (vertex[i].weight.x - vertex[i].weight.y - vertex[i].weight.z));
 			/*	auto inverseVal = 1.0f / (bones[vertex[i].joint[0]].offset_ - vertex[i].pos).Magnitude();
 				inverseVal += 1.0f / (bones[vertex[i].joint[1]].offset_ - vertex[i].pos).Magnitude();
 				inverseVal += 1.0f / (bones[vertex[i].joint[2]].offset_ - vertex[i].pos).Magnitude();
@@ -904,7 +926,7 @@ int main(int argc, char* argv[])
 	std::vector<Mesh> mlist;
 	LoadSkeltalGltf("Swat.gltf");
 
-	LoadSkeletalFbx("Swat.fbx");
+	//LoadSkeletalFbx("Swat.fbx");
 
 	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
