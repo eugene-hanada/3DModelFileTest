@@ -126,6 +126,12 @@ struct Mesh
 	std::string materialName;
 };
 
+
+
+using Vector3AnimationData = std::vector<std::pair<float, Eugene::Vector3>>;
+using RotationAnimationData = std::vector<std::pair<float, Eugene::Quaternion>>;
+
+
 DirectX::XMMATRIX ConvertYToZFront(const DirectX::XMMATRIX& yRotationMatrix)
 {
 	// Yé≤é¸ÇËÇÃâÒì]çsóÒÇ©ÇÁYé≤ÇÃâÒì]äpìxÇéÊìæ
@@ -424,11 +430,16 @@ void SetLoacalTransformMatrix(Bone& b, std::vector<Bone>& bones)
 		diff = b.offset_ - bones[b.parent_].offset_;
 		localOffset = b.offset_ - bones[b.parent_].offset_;
 		localRot = b.q_.ToEuler() - bones[b.parent_].q_.ToEuler();
+		DirectX::XMStoreFloat4x4(&b.transform_, worldMatrix * parentMatrix);
+	}
+	else
+	{
+		DirectX::XMStoreFloat4x4( &b.transform_, worldMatrix);
 	}
 	
 	
 
-	DirectX::XMStoreFloat4x4(&b.transform_, worldMatrix * parentMatrix);
+
 
 	/*DirectX::XMStoreFloat4x4(&b.transform_, 
 		DirectX::XMMatrixRotationRollPitchYaw(localRot.x, localRot.y, localRot.z) * DirectX::XMMatrixTranslation(localOffset.x, localOffset.y, localOffset.z));*/
@@ -454,6 +465,39 @@ void SetInverseBindMatrix(Bone& b, Eugene::Matrix4x4& matrix, std::vector<Bone>&
 	}
 }
 
+void ExportAnimationData(std::vector<std::tuple<Vector3AnimationData, RotationAnimationData, Vector3AnimationData>>& animdata,
+	const std::filesystem::path& path)
+{
+	std::ofstream file{ path,std::ios::binary };
+	struct AnimHeader
+	{
+		char sig[4]{ 's','a','n','i' };
+		std::uint32_t version = 1;
+	};
+
+	AnimHeader h{};
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
+
+	std::uint32_t size = static_cast<std::uint32_t>(animdata.size());
+	file.write(reinterpret_cast<char*>(&size), sizeof(size));
+	
+	for (auto& anim : animdata)
+	{
+		auto& move = std::get<0>(anim);
+		size = static_cast<std::uint32_t>(move.size());
+		file.write(reinterpret_cast<char*>(move.data()), size* (sizeof(float) + sizeof(move[0].second)));
+
+		auto& rot = std::get<1>(anim);
+		size = static_cast<std::uint32_t>(rot.size());
+		file.write(reinterpret_cast<char*>(rot.data()), size * (sizeof(float) + sizeof(rot[0].second)));
+
+		auto& scale = std::get<2>(anim);
+		size = static_cast<std::uint32_t>(scale.size());
+		file.write(reinterpret_cast<char*>(scale.data()), size* (sizeof(float) + sizeof(scale[0].second)));
+	}
+
+}
+
 void LoadSkeltalGltf(const std::string& path)
 {
 	tinygltf::TinyGLTF gltf;
@@ -462,22 +506,23 @@ void LoadSkeltalGltf(const std::string& path)
 	std::string warn;
 	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
 	std::vector<Bone> bones;
+	std::unordered_map<std::string, int> nameTbl;
 	for (auto& skin : model.skins)
 	{
 		DebugLog(skin.name);
-		std::unordered_map<std::string, int> map;
+		
 		
 		bones.resize(skin.joints.size());
 		std::vector<Eugene::Matrix4x4> matrixs(skin.joints.size());
-		map.reserve(skin.joints.size());
+		nameTbl.reserve(skin.joints.size());
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
-			map.emplace(model.nodes[skin.joints[i]].name, i);
+			nameTbl.emplace(model.nodes[skin.joints[i]].name, i);
 		}
 
 		for (auto& joint : skin.joints)
 		{
-			LoadBone(model, map[model.nodes[joint].name], bones, map);
+			LoadBone(model, nameTbl[model.nodes[joint].name], bones, nameTbl);
 		}
 
 		auto& accsessor = model.accessors[skin.inverseBindMatrices];
@@ -493,8 +538,13 @@ void LoadSkeltalGltf(const std::string& path)
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
 			DirectX::XMVECTOR scale, trans, qrot;
-			auto result = DirectX::XMMatrixDecompose(&scale, &qrot, &trans, DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&inverseMat_[i])));
-			bones[i].offset_ = { -trans.m128_f32[0] , trans.m128_f32[1] , trans.m128_f32[2] };
+			auto result = DirectX::XMMatrixDecompose(&scale, &qrot, &trans, DirectX::XMMatrixInverse(nullptr, DirectX::XMLoadFloat4x4(&inverseMat_[i]))); 
+			
+			// ç¿ïWånÇç∂éËç¿ïWånÇ…
+			trans.m128_f32[0]  = -trans.m128_f32[0];
+
+
+			bones[i].offset_ = { trans.m128_f32[0] , trans.m128_f32[1] , trans.m128_f32[2] };
 			if (!result)
 			{
 				throw std::exception{};
@@ -502,10 +552,23 @@ void LoadSkeltalGltf(const std::string& path)
 			DirectX::XMFLOAT4 q;
 
 			// âEéËç¿ïWånÅ®ç∂éËç¿ïWånÇ…
-			qrot.m128_f32[0] = -qrot.m128_f32[0];
-			qrot.m128_f32[3] = -qrot.m128_f32[3];
+			DirectX::XMVECTOR axis;
+			float angle;
+			DirectX::XMQuaternionToAxisAngle(&axis, &angle, qrot);
+			axis.m128_f32[0] = -axis.m128_f32[0];
+			qrot = DirectX::XMQuaternionRotationAxis(axis, -angle);
+
+			auto rotX = DirectX::XMQuaternionRotationAxis(DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), Eugene::Deg2Rad(-90.0f));
+
+			qrot = DirectX::XMQuaternionMultiply(qrot,rotX);
 			
-			DirectX::XMMatrixDecompose(&scale,&qrot,&trans, ConvertYToZFront(DirectX::XMMatrixRotationQuaternion(qrot)));
+
+			/*auto frontVec = DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), qrot);
+			qrot = DirectX::XMQuaternionRotationAxis(frontVec, -angle);*/
+
+			//DirectX::XMMatrixDecompose(&scale, &qrot, &trans,frontLookMatrix);
+			//DirectX::XMMatrixDecompose(&scale,&qrot,&trans, ConvertYToZFront(DirectX::XMMatrixRotationQuaternion(qrot)));
+
 			DirectX::XMStoreFloat4(&q, (qrot));
 
 
@@ -633,6 +696,79 @@ void LoadSkeltalGltf(const std::string& path)
 	}
 
 	
+	for (auto& anim : model.animations)
+	{
+		//auto animiName = anim.name;
+		std::vector<std::tuple<Vector3AnimationData, RotationAnimationData, Vector3AnimationData>> data_;
+		data_.resize(nameTbl.size());
+		for (auto& channel : anim.channels)
+		{
+			auto idx = nameTbl[model.nodes[channel.target_node].name];
+			auto& sampler = anim.samplers[channel.sampler];
+			auto& inputAccessor = model.accessors[sampler.input];
+			auto& inputBufferView = model.bufferViews[inputAccessor.bufferView];
+			auto& inputBuffer = model.buffers[inputBufferView.buffer];
+
+			auto inputP = reinterpret_cast<float*>(&inputBuffer.data[inputBufferView.byteOffset + inputAccessor.byteOffset]);
+			
+
+			auto& outputAccessor = model.accessors[sampler.output];
+			auto& outputBufferView = model.bufferViews[outputAccessor.bufferView];
+			auto& outputBuffer = model.buffers[outputBufferView.buffer];
+			void* outputP = reinterpret_cast<void*>(&outputBuffer.data[outputBufferView.byteOffset + outputAccessor.byteOffset]);
+
+
+		
+
+			auto loadMove = [&]() {
+				auto& move = std::get<0>(data_[idx]);
+				move.resize(inputAccessor.count);
+				for (int i = 0; i < inputAccessor.count; i++)
+				{
+					move[i].first = inputP[i];
+					move[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
+					move[i].second.x = -move[i].second.x;
+				}
+			};
+
+			auto loadRot = [&]() {
+				auto& rot = std::get<1>(data_[idx]);
+				rot.resize(inputAccessor.count);
+				for (int i = 0; i < inputAccessor.count; i++)
+				{
+					rot[i].first = inputP[i];
+					rot[i].second = static_cast<Eugene::Quaternion*>(outputP)[i];
+					rot[i].second.x = -rot[i].second.x;
+					rot[i].second.w = -rot[i].second.w;
+				}
+			};
+
+			auto loadSc = [&]() {
+				auto& sc = std::get<2>(data_[idx]);
+				sc.resize(inputAccessor.count);
+				for (int i = 0; i < inputAccessor.count; i++)
+				{
+					sc[i].first = inputP[i];
+					sc[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
+				}
+			};
+
+			if (channel.target_path == std::string{"translation"})
+			{
+				loadMove();
+			}
+			else if (channel.target_path == std::string{ "rotation" })
+			{
+				loadRot();
+			}
+			else
+			{
+				loadSc();
+			}
+		}
+
+		ExportAnimationData(data_, "Swat.sani");
+	}
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
