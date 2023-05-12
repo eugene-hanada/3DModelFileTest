@@ -12,7 +12,7 @@
 
 #include "EugeneLib/Include/Graphics/IndexView.h"
 
-#include "EugeneLib/Include/ThirdParty/DirectXMath/DirectXMath.h"
+//#include <DirectXMath.h>
 
 #include "EugeneLib/Include/Math/Geometry.h"
 
@@ -485,21 +485,133 @@ void ExportAnimationData(std::vector<std::tuple<Vector3AnimationData, RotationAn
 	{
 		auto& move = std::get<0>(anim);
 		size = static_cast<std::uint32_t>(move.size());
+		file.write(reinterpret_cast<char*>(&size), sizeof(size));
 		file.write(reinterpret_cast<char*>(move.data()), size* (sizeof(float) + sizeof(move[0].second)));
 
 		auto& rot = std::get<1>(anim);
 		size = static_cast<std::uint32_t>(rot.size());
+		file.write(reinterpret_cast<char*>(&size), sizeof(size));
 		file.write(reinterpret_cast<char*>(rot.data()), size * (sizeof(float) + sizeof(rot[0].second)));
 
 		auto& scale = std::get<2>(anim);
 		size = static_cast<std::uint32_t>(scale.size());
+		file.write(reinterpret_cast<char*>(&size), sizeof(size));
 		file.write(reinterpret_cast<char*>(scale.data()), size* (sizeof(float) + sizeof(scale[0].second)));
 	}
 
 }
 
+struct Motion
+{
+	float time;
+	Eugene::Vector3 location;
+	Eugene::Quaternion quaternion;
+};
+
+void ExportMotion(const std::filesystem::path& path,
+	std::map<std::string, std::list<Motion>>& motiondata, 
+	std::unordered_map<std::string, int>& boneNameTbl)
+{
+	std::ofstream file{ path,std::ios::binary };
+	struct AnimHeader
+	{
+		char sig[4]{ 's','a','n','i' };
+		std::uint32_t version = 1;
+	};
+
+	AnimHeader h{};
+	file.write(reinterpret_cast<char*>(&h), sizeof(h));
+	
+	std::vector<std::vector<Motion>> exportData(boneNameTbl.size());
+	
+	std::uint32_t boneNum = exportData.size();
+	file.write(reinterpret_cast<char*>(&boneNum), sizeof(boneNum));
+
+	for (auto& motion : motiondata)
+	{
+		exportData[boneNameTbl[motion.first]].resize(motion.second.size());
+		std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
+	}
+
+	for (auto& exData : exportData)
+	{
+		auto num = static_cast<std::uint32_t>(exData.size());
+		file.write(reinterpret_cast<char*>(&num), sizeof(num));
+		file.write(reinterpret_cast<char*>(exData.data()), exData.size() * sizeof(exData[0]));
+	}
+
+
+}
+
+void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::string, int>& boneNameTbl)
+{
+	std::ifstream file{ path, std::ios::binary };
+#pragma pack(1)
+	struct VMDMotion
+	{
+		VMDMotion()
+		{
+			std::fill(std::begin(boneName), std::end(boneName), 0);
+		}
+		char boneName[15];		// ボーン名
+		unsigned int frameNo;	// フレーム番号
+		Eugene::Vector3 location;		// 位置
+		Eugene::Quaternion quaternion;	// クオータニオン(回転)
+		unsigned char bezier[64];		// [4][4][4]ベジェ補完パラメーター
+	};
+#pragma pack()
+
+	file.ignore(50);
+	unsigned int motionDataNum{ 0 };
+	file.read(reinterpret_cast<char*>(&motionDataNum), sizeof(motionDataNum));
+
+	std::vector<VMDMotion> vmdMotionData(motionDataNum);
+	std::vector<std::string> nameVec(boneNameTbl.size());
+	for (auto& boneN : boneNameTbl)
+	{
+		nameVec.emplace_back(boneN.first);
+	}
+	std::sort(nameVec.begin(), nameVec.end(), [](auto& a, auto& b) {return a.size() > b.size(); });
+
+	for (auto& vmd : vmdMotionData)
+	{
+		file.read(reinterpret_cast<char*>(&vmd.boneName), sizeof(char) * 15);
+		file.read(reinterpret_cast<char*>(&vmd.frameNo), sizeof(VMDMotion) - (sizeof(char) * 15));
+	}
+
+	auto  checkName = [&boneNameTbl, &nameVec](char name[15])
+	{
+		bool flag = true;
+		std::string tmp = name;
+
+		for (auto& boneN : nameVec)
+		{
+			if (tmp.starts_with(boneN))
+			{
+				return boneN;
+			}
+		}
+		return std::string{};
+	};
+
+	std::map<std::string,std::list<Motion>> motionData;
+	for (auto& vmd : vmdMotionData)
+	{
+		auto tmp = checkName(vmd.boneName);
+		motionData[tmp].emplace_back
+		(
+			Motion{ 1.0f / 60.0f * static_cast<float>(vmd.frameNo), vmd.location, vmd.quaternion }
+		);
+	}
+
+
+
+	ExportMotion("run.sani", motionData, boneNameTbl);
+}
+
 void LoadSkeltalGltf(const std::string& path)
 {
+	
 	tinygltf::TinyGLTF gltf;
 	tinygltf::Model model;
 	std::string err;
@@ -517,12 +629,14 @@ void LoadSkeltalGltf(const std::string& path)
 		nameTbl.reserve(skin.joints.size());
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
-			nameTbl.emplace(model.nodes[skin.joints[i]].name, i);
+			auto tmp = model.nodes[skin.joints[i]].name.substr(model.nodes[skin.joints[i]].name.find_first_of(":") + 1);
+			nameTbl.emplace(tmp, i);
 		}
 
 		for (auto& joint : skin.joints)
 		{
-			LoadBone(model, nameTbl[model.nodes[joint].name], bones, nameTbl);
+			auto tmp = model.nodes[joint].name.substr(model.nodes[joint].name.find_first_of(":") + 1);
+			LoadBone(model, nameTbl[tmp], bones, nameTbl);
 		}
 
 		auto& accsessor = model.accessors[skin.inverseBindMatrices];
@@ -551,6 +665,18 @@ void LoadSkeltalGltf(const std::string& path)
 			}
 			DirectX::XMFLOAT4 q;
 
+			
+			//auto rotX = DirectX::XMQuaternionRotationAxis(DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), Eugene::Deg2Rad(-90.0f));
+			//qrot = DirectX::XMQuaternionMultiply(qrot,rotX);
+			
+
+			auto frontVec = DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), qrot);
+			//qrot = DirectX::XMQuaternionRotationAxis(frontVec, -angle);
+			auto lookMatrix = DirectX::XMMatrixLookToRH(DirectX::XMVectorZero(), DirectX::XMVector3Normalize(frontVec), DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+			DirectX::XMMatrixDecompose(&scale, &qrot, &trans, lookMatrix);
+
+			//DirectX::XMMatrixDecompose(&scale,&qrot,&trans, ConvertYToZFront(DirectX::XMMatrixRotationQuaternion(qrot)));
+			
 			// 右手座標系→左手座標系に
 			DirectX::XMVECTOR axis;
 			float angle;
@@ -558,21 +684,8 @@ void LoadSkeltalGltf(const std::string& path)
 			axis.m128_f32[0] = -axis.m128_f32[0];
 			qrot = DirectX::XMQuaternionRotationAxis(axis, -angle);
 
-			auto rotX = DirectX::XMQuaternionRotationAxis(DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), Eugene::Deg2Rad(-90.0f));
-
-			qrot = DirectX::XMQuaternionMultiply(qrot,rotX);
-			
-
-			/*auto frontVec = DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), qrot);
-			qrot = DirectX::XMQuaternionRotationAxis(frontVec, -angle);*/
-
-			//DirectX::XMMatrixDecompose(&scale, &qrot, &trans,frontLookMatrix);
-			//DirectX::XMMatrixDecompose(&scale,&qrot,&trans, ConvertYToZFront(DirectX::XMMatrixRotationQuaternion(qrot)));
 
 			DirectX::XMStoreFloat4(&q, (qrot));
-
-
-
 			bones[i].q_ = { q.x,q.y, q.z, q.w };
 			
 
@@ -696,79 +809,95 @@ void LoadSkeltalGltf(const std::string& path)
 	}
 
 	
-	for (auto& anim : model.animations)
-	{
-		//auto animiName = anim.name;
-		std::vector<std::tuple<Vector3AnimationData, RotationAnimationData, Vector3AnimationData>> data_;
-		data_.resize(nameTbl.size());
-		for (auto& channel : anim.channels)
-		{
-			auto idx = nameTbl[model.nodes[channel.target_node].name];
-			auto& sampler = anim.samplers[channel.sampler];
-			auto& inputAccessor = model.accessors[sampler.input];
-			auto& inputBufferView = model.bufferViews[inputAccessor.bufferView];
-			auto& inputBuffer = model.buffers[inputBufferView.buffer];
+	//for (auto& anim : model.animations)
+	//{
+	//	//auto animiName = anim.name;
+	//	std::vector<std::tuple<Vector3AnimationData, RotationAnimationData, Vector3AnimationData>> data_;
+	//	data_.resize(nameTbl.size());
+	//	for (auto& channel : anim.channels)
+	//	{
+	//		auto idx = nameTbl[model.nodes[channel.target_node].name];
+	//		auto& sampler = anim.samplers[channel.sampler];
+	//		auto& inputAccessor = model.accessors[sampler.input];
+	//		auto& inputBufferView = model.bufferViews[inputAccessor.bufferView];
+	//		auto& inputBuffer = model.buffers[inputBufferView.buffer];
 
-			auto inputP = reinterpret_cast<float*>(&inputBuffer.data[inputBufferView.byteOffset + inputAccessor.byteOffset]);
-			
+	//		auto inputP = reinterpret_cast<float*>(&inputBuffer.data[inputBufferView.byteOffset + inputAccessor.byteOffset]);
+	//		
 
-			auto& outputAccessor = model.accessors[sampler.output];
-			auto& outputBufferView = model.bufferViews[outputAccessor.bufferView];
-			auto& outputBuffer = model.buffers[outputBufferView.buffer];
-			void* outputP = reinterpret_cast<void*>(&outputBuffer.data[outputBufferView.byteOffset + outputAccessor.byteOffset]);
+	//		auto& outputAccessor = model.accessors[sampler.output];
+	//		auto& outputBufferView = model.bufferViews[outputAccessor.bufferView];
+	//		auto& outputBuffer = model.buffers[outputBufferView.buffer];
+	//		void* outputP = reinterpret_cast<void*>(&outputBuffer.data[outputBufferView.byteOffset + outputAccessor.byteOffset]);
 
 
-		
+	//	
 
-			auto loadMove = [&]() {
-				auto& move = std::get<0>(data_[idx]);
-				move.resize(inputAccessor.count);
-				for (int i = 0; i < inputAccessor.count; i++)
-				{
-					move[i].first = inputP[i];
-					move[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
-					move[i].second.x = -move[i].second.x;
-				}
-			};
+	//		auto loadMove = [&]() {
+	//			auto& move = std::get<0>(data_[idx]);
+	//			move.resize(inputAccessor.count);
+	//			for (int i = 0; i < inputAccessor.count; i++)
+	//			{
+	//				move[i].first = inputP[i];
+	//				move[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
+	//				move[i].second.x = -move[i].second.x;
+	//				move[i].second /= 100.0f;
+	//			}
+	//		};
 
-			auto loadRot = [&]() {
-				auto& rot = std::get<1>(data_[idx]);
-				rot.resize(inputAccessor.count);
-				for (int i = 0; i < inputAccessor.count; i++)
-				{
-					rot[i].first = inputP[i];
-					rot[i].second = static_cast<Eugene::Quaternion*>(outputP)[i];
-					rot[i].second.x = -rot[i].second.x;
-					rot[i].second.w = -rot[i].second.w;
-				}
-			};
+	//		auto loadRot = [&]() {
+	//			auto& rot = std::get<1>(data_[idx]);
+	//			rot.resize(inputAccessor.count);
+	//			for (int i = 0; i < inputAccessor.count; i++)
+	//			{
+	//				rot[i].first = inputP[i];
+	//				rot[i].second = static_cast<Eugene::Quaternion*>(outputP)[i];
+	//				
+	//				auto qrot = DirectX::XMVectorSet(rot[i].second.x, rot[i].second.y, rot[i].second.z, 0.0f);
+	//				auto frontVec = DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), qrot);
+	//				auto mat = DirectX::XMMatrixLookToRH(DirectX::XMVectorZero(), frontVec, DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+	//				DirectX::XMVECTOR scale, trans;
+	//				DirectX::XMMatrixDecompose(&scale, &qrot, &trans, mat);
 
-			auto loadSc = [&]() {
-				auto& sc = std::get<2>(data_[idx]);
-				sc.resize(inputAccessor.count);
-				for (int i = 0; i < inputAccessor.count; i++)
-				{
-					sc[i].first = inputP[i];
-					sc[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
-				}
-			};
+	//				DirectX::XMVECTOR axis;
+	//				float angle;
+	//				DirectX::XMQuaternionToAxisAngle(&axis, &angle, qrot);
+	//				axis.m128_f32[0] = -axis.m128_f32[0];
+	//				qrot = DirectX::XMQuaternionRotationAxis(axis, -angle);
+	//				rot[i].second = { qrot.m128_f32[0], qrot.m128_f32[1],qrot.m128_f32[2] };
+	//				auto t = rot[i].second.ToEuler();
+	//				DebugLog("euler={}", t);
+	//			}
+	//		};
 
-			if (channel.target_path == std::string{"translation"})
-			{
-				loadMove();
-			}
-			else if (channel.target_path == std::string{ "rotation" })
-			{
-				loadRot();
-			}
-			else
-			{
-				loadSc();
-			}
-		}
+	//		auto loadSc = [&]() {
+	//			auto& sc = std::get<2>(data_[idx]);
+	//			sc.resize(inputAccessor.count);
+	//			for (int i = 0; i < inputAccessor.count; i++)
+	//			{
+	//				sc[i].first = inputP[i];
+	//				sc[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
+	//			}
+	//		};
 
-		ExportAnimationData(data_, "Swat.sani");
-	}
+	//		if (channel.target_path == std::string{"translation"})
+	//		{
+	//			loadMove();
+	//		}
+	//		else if (channel.target_path == std::string{ "rotation" })
+	//		{
+	//			loadRot();
+	//		}
+	//		else
+	//		{
+	//			loadSc();
+	//		}
+	//	}
+
+	//	ExportAnimationData(data_, "Swat.sani");
+	//}
+
+	LoadVmdFile("run.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
