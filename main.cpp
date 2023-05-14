@@ -524,7 +524,7 @@ void ExportMotion(const std::filesystem::path& path,
 	
 	std::vector<std::vector<Motion>> exportData(boneNameTbl.size());
 	
-	std::uint32_t boneNum = exportData.size();
+	std::uint32_t boneNum = motiondata.size();
 	file.write(reinterpret_cast<char*>(&boneNum), sizeof(boneNum));
 
 	for (auto& motion : motiondata)
@@ -533,18 +533,52 @@ void ExportMotion(const std::filesystem::path& path,
 		std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
 	}
 
-	for (auto& exData : exportData)
+	for (int i = 0; i < exportData.size(); i++)
 	{
-		auto num = static_cast<std::uint32_t>(exData.size());
+		if (exportData[i].size() <= 0)
+		{
+			continue;
+		}
+		auto boneIdx = static_cast<std::uint32_t>(i);
+		file.write(reinterpret_cast<char*>(&boneIdx), sizeof(boneIdx));
+		auto num = static_cast<std::uint32_t>(exportData[i].size());
 		file.write(reinterpret_cast<char*>(&num), sizeof(num));
-		file.write(reinterpret_cast<char*>(exData.data()), exData.size() * sizeof(exData[0]));
+		file.write(reinterpret_cast<char*>(exportData[i].data()), exportData[i].size() * sizeof(exportData[i][0]));
 	}
 
 
 }
 
+
+std::string ConverteBoneName(char name[15] ,std::unordered_map<std::string, int>& boneNameTbl)
+{
+	return "a";
+}
+
 void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::string, int>& boneNameTbl)
 {
+	std::unordered_map<std::string, int> vmdBoneNameTbl(boneNameTbl.size());
+
+	for (auto& name : boneNameTbl)
+	{
+		auto l = name.first.find("Left");
+		if (l  < name.first.size())
+		{
+			vmdBoneNameTbl["L_" + name.first.substr(l + 4)] = name.second;
+			continue;
+		}
+
+		auto r = name.first.find("Right");
+		if (r < name.first.size())
+		{
+			vmdBoneNameTbl["R_" + name.first.substr(r + 5)] = name.second;
+			continue;
+		}
+
+		vmdBoneNameTbl[name.first] = name.second;
+	}
+
+
 	std::ifstream file{ path, std::ios::binary };
 #pragma pack(1)
 	struct VMDMotion
@@ -566,8 +600,8 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	file.read(reinterpret_cast<char*>(&motionDataNum), sizeof(motionDataNum));
 
 	std::vector<VMDMotion> vmdMotionData(motionDataNum);
-	std::vector<std::string> nameVec(boneNameTbl.size());
-	for (auto& boneN : boneNameTbl)
+	std::vector<std::string> nameVec(vmdBoneNameTbl.size());
+	for (auto& boneN : vmdBoneNameTbl)
 	{
 		nameVec.emplace_back(boneN.first);
 	}
@@ -579,7 +613,7 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 		file.read(reinterpret_cast<char*>(&vmd.frameNo), sizeof(VMDMotion) - (sizeof(char) * 15));
 	}
 
-	auto  checkName = [&boneNameTbl, &nameVec](char name[15])
+	auto  checkName = [&nameVec](char name[15])
 	{
 		bool flag = true;
 		std::string tmp = name;
@@ -598,15 +632,37 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	for (auto& vmd : vmdMotionData)
 	{
 		auto tmp = checkName(vmd.boneName);
+		auto t = static_cast<float>( 1.0 / 60.0 * static_cast<double>(vmd.frameNo));
+		if (tmp == std::string{ "RightHandMiddle1" })
+		{
+			DebugLog("FrameNo={}", vmd.frameNo);
+		}
 		motionData[tmp].emplace_back
 		(
-			Motion{ 1.0f / 60.0f * static_cast<float>(vmd.frameNo), vmd.location, vmd.quaternion }
+			Motion{ t, vmd.location / 100.0f, vmd.quaternion }
 		);
 	}
 
+	for (auto& motion : motionData)
+	{
+		if ((*motion.second.begin()).time > 0.0f)
+		{
+			(*motion.second.begin()).time = 0.0f;
+		}
+	}
+
+	/*for (auto& m : motionData)
+	{
+		DebugLog("Bone={}", m.first);
+		for (auto& motion : m.second)
+		{
+			
+		}
+	}*/
 
 
-	ExportMotion("run.sani", motionData, boneNameTbl);
+
+	ExportMotion("run.sani", motionData, vmdBoneNameTbl);
 }
 
 void LoadSkeltalGltf(const std::string& path)
