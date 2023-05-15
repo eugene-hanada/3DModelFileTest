@@ -639,7 +639,7 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 		}
 		motionData[tmp].emplace_back
 		(
-			Motion{ t, Eugene::zeroVector3<float>, vmd.quaternion }
+			Motion{ t, vmd.location / (1250.0f), vmd.quaternion }
 		);
 	}
 
@@ -953,7 +953,7 @@ void LoadSkeltalGltf(const std::string& path)
 	//	ExportAnimationData(data_, "Swat.sani");
 	//}
 
-	LoadVmdFile("run.vmd", nameTbl);
+	LoadVmdFile("WalkForward.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
