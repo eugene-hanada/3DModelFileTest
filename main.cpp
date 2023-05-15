@@ -8,7 +8,7 @@
 #include <Common/Debug.h>
 #include <unordered_map>
 
-#include <fbxsdk.h>
+//#include <fbxsdk.h>
 
 #include "EugeneLib/Include/Graphics/IndexView.h"
 
@@ -997,195 +997,195 @@ void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
 	mesh.indexBuffer->UnMap();
 }
 
-void TestCalcWorldMatrix(
-	fbxsdk::FbxAMatrix& parentMatrix,
-	Bone& bone, 
-	std::vector<Bone>& bones, 
-	std::vector<fbxsdk::FbxAMatrix>& bindMatrix,
-	std::vector<fbxsdk::FbxAMatrix>& transformMatrix
-)
-{
-	auto worldMatrix = parentMatrix * transformMatrix[bone.index];
+//void TestCalcWorldMatrix(
+//	fbxsdk::FbxAMatrix& parentMatrix,
+//	Bone& bone, 
+//	std::vector<Bone>& bones, 
+//	std::vector<fbxsdk::FbxAMatrix>& bindMatrix,
+//	std::vector<fbxsdk::FbxAMatrix>& transformMatrix
+//)
+//{
+//	auto worldMatrix = parentMatrix * transformMatrix[bone.index];
+//
+//	auto bindMat = bindMatrix[bone.index].Inverse();
+//
+//	for (int i = 0; i < bone.children.size(); i++)
+//	{
+//		TestCalcWorldMatrix(worldMatrix, bones[bone.children[i]], bones, bindMatrix, transformMatrix);
+//	}
+//
+//}
 
-	auto bindMat = bindMatrix[bone.index].Inverse();
-
-	for (int i = 0; i < bone.children.size(); i++)
-	{
-		TestCalcWorldMatrix(worldMatrix, bones[bone.children[i]], bones, bindMatrix, transformMatrix);
-	}
-
-}
-
-void LoadFbxMesh(fbxsdk::FbxMesh* mesh, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
-{
-	auto polygonCount = mesh->GetPolygonCount();
-	int vertexCount = polygonCount * 3;
-	
-	auto ctrlP = mesh->GetControlPoints();
-
-	
-
-	auto dCount = mesh->GetDeformerCount();
-	if (dCount <= 0)
-	{
-		return;
-	}
-	auto skin = static_cast<FbxSkin*>(mesh->GetDeformer(0, FbxDeformer::eSkin));
-	int clusterCount = skin->GetClusterCount();
-	std::vector<FbxAMatrix> bindMatrixVec(clusterCount);
-	std::vector<FbxAMatrix> transformVec(clusterCount);
-	std::unordered_map<std::string, int> nameTbl;
-	nameTbl.reserve(clusterCount);
-	bones.resize(clusterCount);
-
-	
-	// ボーンを読み込む処理
-	for (int i = 0; i < clusterCount; i++) 
-	{
-		auto cluster = skin->GetCluster(i);
-
-		auto boneCount  = cluster->GetControlPointIndicesCount();
-		std::vector<float> weightes(boneCount);
-		std::vector<std::uint16_t> idces(boneCount);
-
-		std::copy_n(cluster->GetControlPointIndices(), boneCount,idces.data());
-		std::copy_n(cluster->GetControlPointWeights(), boneCount, weightes.data());
-		
-		nameTbl[cluster->GetName()] = i;
-		bones[i].name_ = cluster->GetName();
-
-		fbxsdk::FbxAMatrix bindMatrix;
-		cluster->GetTransformMatrix(bindMatrix);
-
-		FbxAMatrix invBindMatrix;
-		cluster->GetTransformLinkMatrix(invBindMatrix);
-		invBindMatrix = invBindMatrix.Inverse();
-
-		FbxAMatrix boneOffset = invBindMatrix ;
-		auto trans = boneOffset.GetT();
-		auto scale = boneOffset.GetS();
-		auto q = boneOffset.GetQ();
-		trans /= 100.0f;
-		boneOffset.SetT(trans);
-		boneOffset.SetS(FbxVector4{ 1,1,1 });
-		bindMatrixVec[i] = boneOffset;
-		bones[i].index = i;
-		auto node = cluster->GetLink();
-		if (node != nullptr)
-		{
-			FbxAMatrix transform;
-			cluster->GetTransformMatrix(transform);
-			auto parent = node->GetParent();
-			if (parent != nullptr)
-			{
-				if (nameTbl.contains(parent->GetName()))
-				{
-					bones[i].parent_ = nameTbl[parent->GetName()];
-					bones[bones[i].parent_].children.push_back(i);
-				}
-			}
-		}
-	}
-
-	for (int i = 0; i < clusterCount; i++)
-	{
-		transformVec[i] = bindMatrixVec[i].Inverse();
-		if (bones[i].parent_ != -1)
-		{
-			transformVec[i] = bindMatrixVec[bones[i].parent_] * bindMatrixVec[i].Inverse();
-		}
-	}
-
-	FbxAMatrix identity;
-	identity.SetIdentity();
-	TestCalcWorldMatrix(identity, bones[0], bones, bindMatrixVec, transformVec);
-	for (int i = 0; i < clusterCount; i++)
-	{
-		for (int y = 0; y < 4; y++)
-		{
-			for (int x = 0; x < 4; x++)
-			{
-				bones[i].inverseMatrix.m[y][x] = bindMatrixVec[i].Get(y,x);
-				bones[i].transform_.m[y][x] = transformVec[i].Get(y, x);
-			}
-		}
-	}
-
-
-
-}
-
-
-
-void LoadFbxNode(fbxsdk::FbxNode* node, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
-{
-	auto mesh = node->GetMesh();
-	if (mesh != nullptr)
-	{
-		// メッシュ処理
-		LoadFbxMesh(mesh, bones, meshList);
-	}
-
-	auto attri = node->GetNodeAttribute();
-	if (attri != nullptr)
-	{
-		if (attri->GetAttributeType() == fbxsdk::FbxNodeAttribute::eSkeleton)
-		{
-			// ボーンの時の処理
-			auto parent = node->GetParent();
-			FbxAMatrix transform = node->EvaluateGlobalTransform();
-			if (parent != nullptr)
-			{
-				auto parentTransform = parent->EvaluateGlobalTransform();
-				transform = parentTransform.Inverse() * transform;
-			}
-
-			auto trans = transform.GetT();
-			auto q = transform.GetQ();
-
-		}
-	}
-	
-
-	auto count = node->GetChildCount();
-	for (int i = 0; i < count; i++)
-	{
-		LoadFbxNode(node->GetChild(i),bones, meshList);
-	}
-}
+//void LoadFbxMesh(fbxsdk::FbxMesh* mesh, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
+//{
+//	auto polygonCount = mesh->GetPolygonCount();
+//	int vertexCount = polygonCount * 3;
+//	
+//	auto ctrlP = mesh->GetControlPoints();
+//
+//	
+//
+//	auto dCount = mesh->GetDeformerCount();
+//	if (dCount <= 0)
+//	{
+//		return;
+//	}
+//	auto skin = static_cast<FbxSkin*>(mesh->GetDeformer(0, FbxDeformer::eSkin));
+//	int clusterCount = skin->GetClusterCount();
+//	std::vector<FbxAMatrix> bindMatrixVec(clusterCount);
+//	std::vector<FbxAMatrix> transformVec(clusterCount);
+//	std::unordered_map<std::string, int> nameTbl;
+//	nameTbl.reserve(clusterCount);
+//	bones.resize(clusterCount);
+//
+//	
+//	// ボーンを読み込む処理
+//	for (int i = 0; i < clusterCount; i++) 
+//	{
+//		auto cluster = skin->GetCluster(i);
+//
+//		auto boneCount  = cluster->GetControlPointIndicesCount();
+//		std::vector<float> weightes(boneCount);
+//		std::vector<std::uint16_t> idces(boneCount);
+//
+//		std::copy_n(cluster->GetControlPointIndices(), boneCount,idces.data());
+//		std::copy_n(cluster->GetControlPointWeights(), boneCount, weightes.data());
+//		
+//		nameTbl[cluster->GetName()] = i;
+//		bones[i].name_ = cluster->GetName();
+//
+//		fbxsdk::FbxAMatrix bindMatrix;
+//		cluster->GetTransformMatrix(bindMatrix);
+//
+//		FbxAMatrix invBindMatrix;
+//		cluster->GetTransformLinkMatrix(invBindMatrix);
+//		invBindMatrix = invBindMatrix.Inverse();
+//
+//		FbxAMatrix boneOffset = invBindMatrix ;
+//		auto trans = boneOffset.GetT();
+//		auto scale = boneOffset.GetS();
+//		auto q = boneOffset.GetQ();
+//		trans /= 100.0f;
+//		boneOffset.SetT(trans);
+//		boneOffset.SetS(FbxVector4{ 1,1,1 });
+//		bindMatrixVec[i] = boneOffset;
+//		bones[i].index = i;
+//		auto node = cluster->GetLink();
+//		if (node != nullptr)
+//		{
+//			FbxAMatrix transform;
+//			cluster->GetTransformMatrix(transform);
+//			auto parent = node->GetParent();
+//			if (parent != nullptr)
+//			{
+//				if (nameTbl.contains(parent->GetName()))
+//				{
+//					bones[i].parent_ = nameTbl[parent->GetName()];
+//					bones[bones[i].parent_].children.push_back(i);
+//				}
+//			}
+//		}
+//	}
+//
+//	for (int i = 0; i < clusterCount; i++)
+//	{
+//		transformVec[i] = bindMatrixVec[i].Inverse();
+//		if (bones[i].parent_ != -1)
+//		{
+//			transformVec[i] = bindMatrixVec[bones[i].parent_] * bindMatrixVec[i].Inverse();
+//		}
+//	}
+//
+//	FbxAMatrix identity;
+//	identity.SetIdentity();
+//	TestCalcWorldMatrix(identity, bones[0], bones, bindMatrixVec, transformVec);
+//	for (int i = 0; i < clusterCount; i++)
+//	{
+//		for (int y = 0; y < 4; y++)
+//		{
+//			for (int x = 0; x < 4; x++)
+//			{
+//				bones[i].inverseMatrix.m[y][x] = bindMatrixVec[i].Get(y,x);
+//				bones[i].transform_.m[y][x] = transformVec[i].Get(y, x);
+//			}
+//		}
+//	}
+//
+//
+//
+//}
 
 
 
-void LoadSkeletalFbx(const std::filesystem::path& path)
-{
-	fbxsdk::FbxManager* manager = fbxsdk::FbxManager::Create();
-	FbxIOSettings* ios = FbxIOSettings::Create(manager, IOSROOT);
-	manager->SetIOSettings(ios);
+//void LoadFbxNode(fbxsdk::FbxNode* node, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
+//{
+//	auto mesh = node->GetMesh();
+//	if (mesh != nullptr)
+//	{
+//		// メッシュ処理
+//		LoadFbxMesh(mesh, bones, meshList);
+//	}
+//
+//	auto attri = node->GetNodeAttribute();
+//	if (attri != nullptr)
+//	{
+//		if (attri->GetAttributeType() == fbxsdk::FbxNodeAttribute::eSkeleton)
+//		{
+//			// ボーンの時の処理
+//			auto parent = node->GetParent();
+//			FbxAMatrix transform = node->EvaluateGlobalTransform();
+//			if (parent != nullptr)
+//			{
+//				auto parentTransform = parent->EvaluateGlobalTransform();
+//				transform = parentTransform.Inverse() * transform;
+//			}
+//
+//			auto trans = transform.GetT();
+//			auto q = transform.GetQ();
+//
+//		}
+//	}
+//	
+//
+//	auto count = node->GetChildCount();
+//	for (int i = 0; i < count; i++)
+//	{
+//		LoadFbxNode(node->GetChild(i),bones, meshList);
+//	}
+//}
 
-	// FBXファイルの読み込み
-	FbxImporter* importer = FbxImporter::Create(manager, "");
-	bool success = importer->Initialize(path.string().c_str(), -1, manager->GetIOSettings());
-	if (!success) {
-		// エラー処理
-		return;
-	}
 
-	FbxScene* scene = FbxScene::Create(manager, "My Scene");
-	importer->Import(scene);
 
-	std::vector<Bone> bones;
-	std::deque<Mesh> meshList;
-	auto root = scene->GetRootNode();
-	if (root != nullptr)
-	{
-		LoadFbxNode(root,bones,meshList);
-	}
-	ExportBone(path.string().substr(0, path.string().find_last_of(".")) + ".bone", bones);
-	scene->Destroy();
-	importer->Destroy();
-	manager->Destroy();
-
-}
+//void LoadSkeletalFbx(const std::filesystem::path& path)
+//{
+//	fbxsdk::FbxManager* manager = fbxsdk::FbxManager::Create();
+//	FbxIOSettings* ios = FbxIOSettings::Create(manager, IOSROOT);
+//	manager->SetIOSettings(ios);
+//
+//	// FBXファイルの読み込み
+//	FbxImporter* importer = FbxImporter::Create(manager, "");
+//	bool success = importer->Initialize(path.string().c_str(), -1, manager->GetIOSettings());
+//	if (!success) {
+//		// エラー処理
+//		return;
+//	}
+//
+//	FbxScene* scene = FbxScene::Create(manager, "My Scene");
+//	importer->Import(scene);
+//
+//	std::vector<Bone> bones;
+//	std::deque<Mesh> meshList;
+//	auto root = scene->GetRootNode();
+//	if (root != nullptr)
+//	{
+//		LoadFbxNode(root,bones,meshList);
+//	}
+//	ExportBone(path.string().substr(0, path.string().find_last_of(".")) + ".bone", bones);
+//	scene->Destroy();
+//	importer->Destroy();
+//	manager->Destroy();
+//
+//}
 
 int main(int argc, char* argv[])
 {
