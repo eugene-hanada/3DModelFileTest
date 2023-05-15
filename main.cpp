@@ -632,14 +632,14 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	for (auto& vmd : vmdMotionData)
 	{
 		auto tmp = checkName(vmd.boneName);
-		auto t = static_cast<float>( 1.0 / 60.0 * static_cast<double>(vmd.frameNo));
+		auto t = static_cast<float>( 1.0 / 30.0 * static_cast<double>(vmd.frameNo));
 		if (tmp == std::string{ "RightHandMiddle1" })
 		{
 			DebugLog("FrameNo={}", vmd.frameNo);
 		}
 		motionData[tmp].emplace_back
 		(
-			Motion{ t, vmd.location / 100.0f, vmd.quaternion }
+			Motion{ t, Eugene::zeroVector3<float>, vmd.quaternion }
 		);
 	}
 
