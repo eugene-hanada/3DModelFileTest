@@ -360,48 +360,19 @@ void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::uno
 	auto nodeIdx = model.skins[0].joints[idx];
 	bones[idx].name_ = model.nodes[nodeIdx].name;
 
-	
-	Eugene::Vector3 pos{
-		static_cast<float>(model.nodes[nodeIdx].translation[1]),
-		static_cast<float>(model.nodes[nodeIdx].translation[2]),
-		static_cast<float>(model.nodes[nodeIdx].translation[0])
-		
-	};
-
-	Eugene::Vector3 scale{1.0f,1.0f,1.0f};
-
-	if (!model.nodes[nodeIdx].scale.empty())
-	{
-		scale = { static_cast<float>(model.nodes[nodeIdx].scale[1]),
-		static_cast<float>(model.nodes[nodeIdx].scale[2]),
-		static_cast<float>(model.nodes[nodeIdx].scale[0]) };
-	}
-
-	
-	Eugene::Quaternion q{
-		-static_cast<float>(model.nodes[nodeIdx].rotation[1]),
-		static_cast<float>(model.nodes[nodeIdx].rotation[2]),
-		-static_cast<float>(model.nodes[nodeIdx].rotation[3]),
-		static_cast<float>(model.nodes[nodeIdx].rotation[0])
-	};
-	
-	auto rot = q.ToEuler();
-	rot.x = Eugene::Rad2Deg(rot.x);
-	rot.y = Eugene::Rad2Deg(rot.y);
-	rot.z = Eugene::Rad2Deg(rot.z);
-	bones[idx].offset_ = pos;
-	bones[idx].q_ = q;
+	/*bones[idx].offset_ = pos;
+	bones[idx].q_ = q;*/
 	for (auto& child: model.nodes[nodeIdx].children)
 	{
-		
-		if (nameTbl.contains(model.nodes[child].name))
+		auto tmp = model.nodes[child].name;
+		if (nameTbl.contains(tmp))
 		{
 			auto itr = std::find(bones[idx].children.begin(), bones[idx].children.end(), nameTbl[model.nodes[child].name]);
 			if (itr == bones[idx].children.end())
 			{
 				bones[idx].children.push_back(nameTbl[model.nodes[child].name]);
 				bones[nameTbl[model.nodes[child].name]].parent_ = idx;
-				LoadBone(model, nameTbl[model.nodes[child].name], bones, nameTbl);
+				LoadBone(model, nameTbl[tmp], bones, nameTbl);
 			}
 		}
 	}
@@ -550,32 +521,29 @@ void ExportMotion(const std::filesystem::path& path,
 }
 
 
-std::string ConverteBoneName(char name[15] ,std::unordered_map<std::string, int>& boneNameTbl)
-{
-	return "a";
-}
 
 void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::string, int>& boneNameTbl)
 {
 	std::unordered_map<std::string, int> vmdBoneNameTbl(boneNameTbl.size());
 
-	for (auto& name : boneNameTbl)
+	for (auto& boneName : boneNameTbl)
 	{
-		auto l = name.first.find("Left");
-		if (l  < name.first.size())
+		auto name = boneName.first.substr(boneName.first.find_first_of(":") + 1);
+		auto l = name.find("Left");
+		if (l  < name.size())
 		{
-			vmdBoneNameTbl["L_" + name.first.substr(l + 4)] = name.second;
+			vmdBoneNameTbl["L_" + name.substr(l + 4)] = boneName.second;
 			continue;
 		}
 
-		auto r = name.first.find("Right");
-		if (r < name.first.size())
+		auto r = name.find("Right");
+		if (r < name.size())
 		{
-			vmdBoneNameTbl["R_" + name.first.substr(r + 5)] = name.second;
+			vmdBoneNameTbl["R_" + name.substr(r + 5)] = boneName.second;
 			continue;
 		}
 
-		vmdBoneNameTbl[name.first] = name.second;
+		vmdBoneNameTbl[name] = boneName.second;
 	}
 
 
@@ -685,13 +653,13 @@ void LoadSkeltalGltf(const std::string& path)
 		nameTbl.reserve(skin.joints.size());
 		for (int i = 0; i < skin.joints.size(); i++)
 		{
-			auto tmp = model.nodes[skin.joints[i]].name.substr(model.nodes[skin.joints[i]].name.find_first_of(":") + 1);
+			auto tmp = model.nodes[skin.joints[i]].name;
 			nameTbl.emplace(tmp, i);
 		}
 
 		for (auto& joint : skin.joints)
 		{
-			auto tmp = model.nodes[joint].name.substr(model.nodes[joint].name.find_first_of(":") + 1);
+			auto tmp = model.nodes[joint].name;
 			LoadBone(model, nameTbl[tmp], bones, nameTbl);
 		}
 
@@ -758,7 +726,7 @@ void LoadSkeltalGltf(const std::string& path)
 			b.offset_ = b.offset_ / 100.0f;
 		}*/
 
-		SetLoacalTransformMatrix(bones[0], bones);
+		//SetLoacalTransformMatrix(bones[0], bones);
 
 		
 		ExportBone(path.substr(0, path.find_last_of(".")) + ".bone", bones);
