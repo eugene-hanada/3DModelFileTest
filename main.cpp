@@ -629,8 +629,7 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	}*/
 
 
-
-	ExportMotion("run.sani", motionData, vmdBoneNameTbl);
+	ExportMotion("WalkLeft.sani", motionData, vmdBoneNameTbl);
 }
 
 void LoadSkeltalGltf(const std::string& path)
@@ -921,7 +920,7 @@ void LoadSkeltalGltf(const std::string& path)
 	//	ExportAnimationData(data_, "Swat.sani");
 	//}
 
-	LoadVmdFile("WalkForward.vmd", nameTbl);
+	LoadVmdFile("WalkLeft.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
