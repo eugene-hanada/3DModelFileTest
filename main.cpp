@@ -498,10 +498,20 @@ void ExportMotion(const std::filesystem::path& path,
 	std::uint32_t boneNum = motiondata.size();
 	file.write(reinterpret_cast<char*>(&boneNum), sizeof(boneNum));
 
+	std::uint32_t nameSize{ 0u };
 	for (auto& motion : motiondata)
 	{
-		exportData[boneNameTbl[motion.first]].resize(motion.second.size());
-		std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
+		nameSize = boneNameTbl[motion.first].size();
+		file.write(reinterpret_cast<char*>(&nameSize), sizeof(nameSize));
+		file.write(boneNameTbl[motion.first].data(), sizeof(nameSize));
+
+		auto num = static_cast<std::uint32_t>(motion.second.size());
+		file.write(reinterpret_cast<char*>(&num), sizeof(num));
+		std::vector<Motion> tmpData(num);
+		std::copy(motion.second.begin(), motion.second.end(), tmpData.data());
+		file.write(reinterpret_cast<char*>(tmpData.data()), tmpData.size() * sizeof(tmpData[0]));
+		//exportData[boneNameTbl[motion.first]].resize(motion.second.size());
+		//std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
 	}
 
 	/*for (int i = 0; i < exportData.size(); i++)
