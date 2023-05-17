@@ -503,13 +503,14 @@ void ExportMotion(const std::filesystem::path& path,
 	{
 		nameSize = boneNameTbl[motion.first].size();
 		file.write(reinterpret_cast<char*>(&nameSize), sizeof(nameSize));
-		file.write(boneNameTbl[motion.first].data(), sizeof(nameSize));
+		file.write(boneNameTbl[motion.first].data(),  nameSize);
 
-		auto num = static_cast<std::uint32_t>(motion.second.size());
+		std::uint32_t num = static_cast<std::uint32_t>(motion.second.size());
 		file.write(reinterpret_cast<char*>(&num), sizeof(num));
 		std::vector<Motion> tmpData(num);
 		std::copy(motion.second.begin(), motion.second.end(), tmpData.data());
-		file.write(reinterpret_cast<char*>(tmpData.data()), tmpData.size() * sizeof(tmpData[0]));
+		file.write(reinterpret_cast<char*>(tmpData.data()), sizeof(tmpData[0]) * num);
+
 		//exportData[boneNameTbl[motion.first]].resize(motion.second.size());
 		//std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
 	}
@@ -636,7 +637,15 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	}*/
 
 
-	ExportMotion("ZombieWalk.sani", motionData, vmdBoneNameTbl);
+	ExportMotion(path.string().substr(0,path.string().find_last_of(".")) + ".sani", motionData, vmdBoneNameTbl);
+}
+
+void ExportImage(tinygltf::Model& model)
+{
+	for (auto& img : model.images)
+	{
+		stbi_write_png((img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
+	}
 }
 
 void LoadSkeltalGltf(const std::string& path)
@@ -838,7 +847,9 @@ void LoadSkeltalGltf(const std::string& path)
 		ExportMaterial("./" + material.name + ".mat", material, model, "SkeletalMesh");
 	}
 
-	LoadVmdFile("WalkForward.vmd", nameTbl);
+	ExportImage(model);
+
+	LoadVmdFile("ZombieDie.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
@@ -940,7 +951,7 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
-	LoadSkeltalGltf("Swat.gltf");
+	LoadSkeltalGltf("ZombieA.gltf");
 
 	//LoadSkeletalFbx("Swat.fbx");
 
