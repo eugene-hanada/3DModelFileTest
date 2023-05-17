@@ -481,7 +481,7 @@ struct Motion
 
 void ExportMotion(const std::filesystem::path& path,
 	std::map<std::string, std::list<Motion>>& motiondata, 
-	std::unordered_map<std::string, int>& boneNameTbl)
+	std::unordered_map<std::string, std::string>& boneNameTbl)
 {
 	std::ofstream file{ path,std::ios::binary };
 	struct AnimHeader
@@ -504,7 +504,7 @@ void ExportMotion(const std::filesystem::path& path,
 		std::copy(motion.second.begin(), motion.second.end(), exportData[boneNameTbl[motion.first]].data());
 	}
 
-	for (int i = 0; i < exportData.size(); i++)
+	/*for (int i = 0; i < exportData.size(); i++)
 	{
 		if (exportData[i].size() <= 0)
 		{
@@ -515,7 +515,7 @@ void ExportMotion(const std::filesystem::path& path,
 		auto num = static_cast<std::uint32_t>(exportData[i].size());
 		file.write(reinterpret_cast<char*>(&num), sizeof(num));
 		file.write(reinterpret_cast<char*>(exportData[i].data()), exportData[i].size() * sizeof(exportData[i][0]));
-	}
+	}*/
 
 
 }
@@ -524,7 +524,7 @@ void ExportMotion(const std::filesystem::path& path,
 
 void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::string, int>& boneNameTbl)
 {
-	std::unordered_map<std::string, int> vmdBoneNameTbl(boneNameTbl.size());
+	std::unordered_map<std::string, std::string> vmdBoneNameTbl(boneNameTbl.size());
 
 	for (auto& boneName : boneNameTbl)
 	{
@@ -532,18 +532,18 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 		auto l = name.find("Left");
 		if (l  < name.size())
 		{
-			vmdBoneNameTbl["L_" + name.substr(l + 4)] = boneName.second;
+			vmdBoneNameTbl["L_" + name.substr(l + 4)] = boneName.first;
 			continue;
 		}
 
 		auto r = name.find("Right");
 		if (r < name.size())
 		{
-			vmdBoneNameTbl["R_" + name.substr(r + 5)] = boneName.second;
+			vmdBoneNameTbl["R_" + name.substr(r + 5)] = boneName.first;
 			continue;
 		}
 
-		vmdBoneNameTbl[name] = boneName.second;
+		vmdBoneNameTbl[name] = boneName.first;
 	}
 
 
@@ -599,12 +599,9 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	std::map<std::string,std::list<Motion>> motionData;
 	for (auto& vmd : vmdMotionData)
 	{
-		auto tmp = checkName(vmd.boneName);
+		auto tmp = std::string(vmd.boneName);
 		auto t = static_cast<float>( 1.0 / 30.0 * static_cast<double>(vmd.frameNo));
-		if (tmp == std::string{ "RightHandMiddle1" })
-		{
-			DebugLog("FrameNo={}", vmd.frameNo);
-		}
+		//DebugLog("Name={}", vmd.boneName);
 		motionData[tmp].emplace_back
 		(
 			Motion{ t, vmd.location / (1250.0f), vmd.quaternion }
@@ -831,7 +828,7 @@ void LoadSkeltalGltf(const std::string& path)
 		ExportMaterial("./" + material.name + ".mat", material, model, "SkeletalMesh");
 	}
 
-	LoadVmdFile("ZombieWalk.vmd", nameTbl);
+	LoadVmdFile("WalkForward.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
@@ -874,196 +871,6 @@ void MeshInit(Eugene::Graphics& graphics, Mesh& mesh)
 	std::copy(mesh.index.begin(), mesh.index.end(), indexMap);
 	mesh.indexBuffer->UnMap();
 }
-
-//void TestCalcWorldMatrix(
-//	fbxsdk::FbxAMatrix& parentMatrix,
-//	Bone& bone, 
-//	std::vector<Bone>& bones, 
-//	std::vector<fbxsdk::FbxAMatrix>& bindMatrix,
-//	std::vector<fbxsdk::FbxAMatrix>& transformMatrix
-//)
-//{
-//	auto worldMatrix = parentMatrix * transformMatrix[bone.index];
-//
-//	auto bindMat = bindMatrix[bone.index].Inverse();
-//
-//	for (int i = 0; i < bone.children.size(); i++)
-//	{
-//		TestCalcWorldMatrix(worldMatrix, bones[bone.children[i]], bones, bindMatrix, transformMatrix);
-//	}
-//
-//}
-
-//void LoadFbxMesh(fbxsdk::FbxMesh* mesh, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
-//{
-//	auto polygonCount = mesh->GetPolygonCount();
-//	int vertexCount = polygonCount * 3;
-//	
-//	auto ctrlP = mesh->GetControlPoints();
-//
-//	
-//
-//	auto dCount = mesh->GetDeformerCount();
-//	if (dCount <= 0)
-//	{
-//		return;
-//	}
-//	auto skin = static_cast<FbxSkin*>(mesh->GetDeformer(0, FbxDeformer::eSkin));
-//	int clusterCount = skin->GetClusterCount();
-//	std::vector<FbxAMatrix> bindMatrixVec(clusterCount);
-//	std::vector<FbxAMatrix> transformVec(clusterCount);
-//	std::unordered_map<std::string, int> nameTbl;
-//	nameTbl.reserve(clusterCount);
-//	bones.resize(clusterCount);
-//
-//	
-//	// ボーンを読み込む処理
-//	for (int i = 0; i < clusterCount; i++) 
-//	{
-//		auto cluster = skin->GetCluster(i);
-//
-//		auto boneCount  = cluster->GetControlPointIndicesCount();
-//		std::vector<float> weightes(boneCount);
-//		std::vector<std::uint16_t> idces(boneCount);
-//
-//		std::copy_n(cluster->GetControlPointIndices(), boneCount,idces.data());
-//		std::copy_n(cluster->GetControlPointWeights(), boneCount, weightes.data());
-//		
-//		nameTbl[cluster->GetName()] = i;
-//		bones[i].name_ = cluster->GetName();
-//
-//		fbxsdk::FbxAMatrix bindMatrix;
-//		cluster->GetTransformMatrix(bindMatrix);
-//
-//		FbxAMatrix invBindMatrix;
-//		cluster->GetTransformLinkMatrix(invBindMatrix);
-//		invBindMatrix = invBindMatrix.Inverse();
-//
-//		FbxAMatrix boneOffset = invBindMatrix ;
-//		auto trans = boneOffset.GetT();
-//		auto scale = boneOffset.GetS();
-//		auto q = boneOffset.GetQ();
-//		trans /= 100.0f;
-//		boneOffset.SetT(trans);
-//		boneOffset.SetS(FbxVector4{ 1,1,1 });
-//		bindMatrixVec[i] = boneOffset;
-//		bones[i].index = i;
-//		auto node = cluster->GetLink();
-//		if (node != nullptr)
-//		{
-//			FbxAMatrix transform;
-//			cluster->GetTransformMatrix(transform);
-//			auto parent = node->GetParent();
-//			if (parent != nullptr)
-//			{
-//				if (nameTbl.contains(parent->GetName()))
-//				{
-//					bones[i].parent_ = nameTbl[parent->GetName()];
-//					bones[bones[i].parent_].children.push_back(i);
-//				}
-//			}
-//		}
-//	}
-//
-//	for (int i = 0; i < clusterCount; i++)
-//	{
-//		transformVec[i] = bindMatrixVec[i].Inverse();
-//		if (bones[i].parent_ != -1)
-//		{
-//			transformVec[i] = bindMatrixVec[bones[i].parent_] * bindMatrixVec[i].Inverse();
-//		}
-//	}
-//
-//	FbxAMatrix identity;
-//	identity.SetIdentity();
-//	TestCalcWorldMatrix(identity, bones[0], bones, bindMatrixVec, transformVec);
-//	for (int i = 0; i < clusterCount; i++)
-//	{
-//		for (int y = 0; y < 4; y++)
-//		{
-//			for (int x = 0; x < 4; x++)
-//			{
-//				bones[i].inverseMatrix.m[y][x] = bindMatrixVec[i].Get(y,x);
-//				bones[i].transform_.m[y][x] = transformVec[i].Get(y, x);
-//			}
-//		}
-//	}
-//
-//
-//
-//}
-
-
-
-//void LoadFbxNode(fbxsdk::FbxNode* node, std::vector<Bone>& bones, std::deque<Mesh>& meshList)
-//{
-//	auto mesh = node->GetMesh();
-//	if (mesh != nullptr)
-//	{
-//		// メッシュ処理
-//		LoadFbxMesh(mesh, bones, meshList);
-//	}
-//
-//	auto attri = node->GetNodeAttribute();
-//	if (attri != nullptr)
-//	{
-//		if (attri->GetAttributeType() == fbxsdk::FbxNodeAttribute::eSkeleton)
-//		{
-//			// ボーンの時の処理
-//			auto parent = node->GetParent();
-//			FbxAMatrix transform = node->EvaluateGlobalTransform();
-//			if (parent != nullptr)
-//			{
-//				auto parentTransform = parent->EvaluateGlobalTransform();
-//				transform = parentTransform.Inverse() * transform;
-//			}
-//
-//			auto trans = transform.GetT();
-//			auto q = transform.GetQ();
-//
-//		}
-//	}
-//	
-//
-//	auto count = node->GetChildCount();
-//	for (int i = 0; i < count; i++)
-//	{
-//		LoadFbxNode(node->GetChild(i),bones, meshList);
-//	}
-//}
-
-
-
-//void LoadSkeletalFbx(const std::filesystem::path& path)
-//{
-//	fbxsdk::FbxManager* manager = fbxsdk::FbxManager::Create();
-//	FbxIOSettings* ios = FbxIOSettings::Create(manager, IOSROOT);
-//	manager->SetIOSettings(ios);
-//
-//	// FBXファイルの読み込み
-//	FbxImporter* importer = FbxImporter::Create(manager, "");
-//	bool success = importer->Initialize(path.string().c_str(), -1, manager->GetIOSettings());
-//	if (!success) {
-//		// エラー処理
-//		return;
-//	}
-//
-//	FbxScene* scene = FbxScene::Create(manager, "My Scene");
-//	importer->Import(scene);
-//
-//	std::vector<Bone> bones;
-//	std::deque<Mesh> meshList;
-//	auto root = scene->GetRootNode();
-//	if (root != nullptr)
-//	{
-//		LoadFbxNode(root,bones,meshList);
-//	}
-//	ExportBone(path.string().substr(0, path.string().find_last_of(".")) + ".bone", bones);
-//	scene->Destroy();
-//	importer->Destroy();
-//	manager->Destroy();
-//
-//}
 
 int main(int argc, char* argv[])
 {
@@ -1123,7 +930,7 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
-	LoadSkeltalGltf("ZombieC.gltf");
+	LoadSkeltalGltf("Swat.gltf");
 
 	//LoadSkeletalFbx("Swat.fbx");
 
