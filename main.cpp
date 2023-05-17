@@ -629,7 +629,7 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	}*/
 
 
-	ExportMotion("WalkLeft.sani", motionData, vmdBoneNameTbl);
+	ExportMotion("ZombieWalk.sani", motionData, vmdBoneNameTbl);
 }
 
 void LoadSkeltalGltf(const std::string& path)
@@ -831,96 +831,7 @@ void LoadSkeltalGltf(const std::string& path)
 		ExportMaterial("./" + material.name + ".mat", material, model, "SkeletalMesh");
 	}
 
-	
-	//for (auto& anim : model.animations)
-	//{
-	//	//auto animiName = anim.name;
-	//	std::vector<std::tuple<Vector3AnimationData, RotationAnimationData, Vector3AnimationData>> data_;
-	//	data_.resize(nameTbl.size());
-	//	for (auto& channel : anim.channels)
-	//	{
-	//		auto idx = nameTbl[model.nodes[channel.target_node].name];
-	//		auto& sampler = anim.samplers[channel.sampler];
-	//		auto& inputAccessor = model.accessors[sampler.input];
-	//		auto& inputBufferView = model.bufferViews[inputAccessor.bufferView];
-	//		auto& inputBuffer = model.buffers[inputBufferView.buffer];
-
-	//		auto inputP = reinterpret_cast<float*>(&inputBuffer.data[inputBufferView.byteOffset + inputAccessor.byteOffset]);
-	//		
-
-	//		auto& outputAccessor = model.accessors[sampler.output];
-	//		auto& outputBufferView = model.bufferViews[outputAccessor.bufferView];
-	//		auto& outputBuffer = model.buffers[outputBufferView.buffer];
-	//		void* outputP = reinterpret_cast<void*>(&outputBuffer.data[outputBufferView.byteOffset + outputAccessor.byteOffset]);
-
-
-	//	
-
-	//		auto loadMove = [&]() {
-	//			auto& move = std::get<0>(data_[idx]);
-	//			move.resize(inputAccessor.count);
-	//			for (int i = 0; i < inputAccessor.count; i++)
-	//			{
-	//				move[i].first = inputP[i];
-	//				move[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
-	//				move[i].second.x = -move[i].second.x;
-	//				move[i].second /= 100.0f;
-	//			}
-	//		};
-
-	//		auto loadRot = [&]() {
-	//			auto& rot = std::get<1>(data_[idx]);
-	//			rot.resize(inputAccessor.count);
-	//			for (int i = 0; i < inputAccessor.count; i++)
-	//			{
-	//				rot[i].first = inputP[i];
-	//				rot[i].second = static_cast<Eugene::Quaternion*>(outputP)[i];
-	//				
-	//				auto qrot = DirectX::XMVectorSet(rot[i].second.x, rot[i].second.y, rot[i].second.z, 0.0f);
-	//				auto frontVec = DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), qrot);
-	//				auto mat = DirectX::XMMatrixLookToRH(DirectX::XMVectorZero(), frontVec, DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-	//				DirectX::XMVECTOR scale, trans;
-	//				DirectX::XMMatrixDecompose(&scale, &qrot, &trans, mat);
-
-	//				DirectX::XMVECTOR axis;
-	//				float angle;
-	//				DirectX::XMQuaternionToAxisAngle(&axis, &angle, qrot);
-	//				axis.m128_f32[0] = -axis.m128_f32[0];
-	//				qrot = DirectX::XMQuaternionRotationAxis(axis, -angle);
-	//				rot[i].second = { qrot.m128_f32[0], qrot.m128_f32[1],qrot.m128_f32[2] };
-	//				auto t = rot[i].second.ToEuler();
-	//				DebugLog("euler={}", t);
-	//			}
-	//		};
-
-	//		auto loadSc = [&]() {
-	//			auto& sc = std::get<2>(data_[idx]);
-	//			sc.resize(inputAccessor.count);
-	//			for (int i = 0; i < inputAccessor.count; i++)
-	//			{
-	//				sc[i].first = inputP[i];
-	//				sc[i].second = static_cast<Eugene::Vector3*>(outputP)[i];
-	//			}
-	//		};
-
-	//		if (channel.target_path == std::string{"translation"})
-	//		{
-	//			loadMove();
-	//		}
-	//		else if (channel.target_path == std::string{ "rotation" })
-	//		{
-	//			loadRot();
-	//		}
-	//		else
-	//		{
-	//			loadSc();
-	//		}
-	//	}
-
-	//	ExportAnimationData(data_, "Swat.sani");
-	//}
-
-	LoadVmdFile("WalkLeft.vmd", nameTbl);
+	LoadVmdFile("ZombieWalk.vmd", nameTbl);
 }
 
 void LoadMesh(const std::filesystem::path& path, std::vector<Mesh>& meshs)
@@ -1212,7 +1123,7 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
-	LoadSkeltalGltf("Swat.gltf");
+	LoadSkeltalGltf("ZombieC.gltf");
 
 	//LoadSkeletalFbx("Swat.fbx");
 
