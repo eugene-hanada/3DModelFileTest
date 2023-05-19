@@ -248,7 +248,15 @@ void ExportBone(const std::filesystem::path& path, std::vector<Bone>& bones)
 
 }
 
-void LoadGltf(std::vector<Mesh>& list, const std::string& path)
+void ExportImage(tinygltf::Model& model)
+{
+	for (auto& img : model.images)
+	{
+		stbi_write_png((img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
+	}
+}
+
+void LoadGltf(const std::string& path)
 {
 	tinygltf::TinyGLTF gltf;
 	tinygltf::Model model;
@@ -341,7 +349,7 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 				mesh.materialName = model.materials[primitive.material].name;
 			}
 			ExportMesh(path.substr(0, path.find_last_of("."))+ m.name + std::to_string(p) + ".mesh", mesh.vertex,mesh.index);
-			list.emplace_back(std::move(mesh));
+			//list.emplace_back(std::move(mesh));
 		}
 	}
 
@@ -351,7 +359,7 @@ void LoadGltf(std::vector<Mesh>& list, const std::string& path)
 	{
 		ExportMaterial("./" + material.name + ".mat", material, model,"StaticMesh");
 	}
-
+	ExportImage(model);
 }
 
 void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::unordered_map<std::string, int>& nameTbl)
@@ -374,6 +382,81 @@ void LoadBone(tinygltf::Model& model,int idx, std::vector<Bone>& bones, std::uno
 				bones[nameTbl[model.nodes[child].name]].parent_ = idx;
 				LoadBone(model, nameTbl[tmp], bones, nameTbl);
 			}
+		}
+	}
+}
+
+void LoadTestGltf(const std::string& path)
+{
+	tinygltf::TinyGLTF gltf;
+	tinygltf::Model model;
+	std::string err;
+	std::string warn;
+	gltf.LoadASCIIFromFile(&model, &err, &warn, path);
+
+	struct Vertex
+	{
+		Eugene::Vector3 pos;
+		Eugene::Vector3 normal;
+		Eugene::Vector2 uv;
+	};
+
+	std::vector<Vertex> vert;
+	std::vector<std::uint16_t> index;
+
+	std::ofstream file{ path.substr(0,path.find_last_of(".") - 1) + ".mesh", std::ios::binary };
+
+	for (auto& m : model.meshes)
+	{
+		for (int p = 0; p < m.primitives.size(); p++)
+		{
+			auto& primitive = m.primitives[p];
+			auto& posAccsessor = model.accessors[primitive.attributes["POSITION"]];
+			auto& normAccessor = model.accessors[primitive.attributes["NORMAL"]];
+			auto& uvAccessor = model.accessors[primitive.attributes["TEXCOORD_0"]];
+
+			auto& posBufferView = model.bufferViews[posAccsessor.bufferView];
+			auto& normBufferView = model.bufferViews[normAccessor.bufferView];
+			auto& uvBufferView = model.bufferViews[uvAccessor.bufferView];
+
+			auto& posBuffer = model.buffers[posBufferView.buffer];
+			auto& normBuffer = model.buffers[normBufferView.buffer];
+			auto& uvBuffer = model.buffers[uvBufferView.buffer];
+
+			auto pos = reinterpret_cast<float*>(&posBuffer.data[posBufferView.byteOffset + posAccsessor.byteOffset]);
+			auto norm = reinterpret_cast<float*>(&normBuffer.data[normBufferView.byteOffset + normAccessor.byteOffset]);
+			auto uv = reinterpret_cast<float*>(&uvBuffer.data[uvBufferView.byteOffset + uvAccessor.byteOffset]);
+
+			vert.resize(posAccsessor.count);
+			for (int i = 0; i < posAccsessor.count; i++)
+			{
+				vert[i].pos = Eugene::Vector3{ -pos[i * 3 + 0] ,pos[i * 3 + 1], pos[i * 3 + 2] };
+				vert[i].normal = Eugene::Vector3{ -norm[i * 3 + 0],norm[i * 3 + 1],norm[i * 3 + 2] };
+				vert[i].uv = Eugene::Vector2{ uv[i * 2 + 0],uv[i * 2 + 1] };
+			}
+
+			auto& accessor = model.accessors[primitive.indices];
+			auto& bufferView = model.bufferViews[accessor.bufferView];
+			auto& buffer = model.buffers[bufferView.buffer];
+			auto idxP = reinterpret_cast<std::uint16_t*>(&buffer.data[bufferView.byteOffset + accessor.byteOffset]);
+			index.resize(accessor.count);
+			for (int i = 0; i < accessor.count; i++)
+			{
+				index[i] = idxP[i];
+			}
+
+			for (int i = 0; i < accessor.count; i++)
+			{
+				std::swap(index[i + 0], index[i + 2]);
+				i += 2;
+			}
+
+			int vertexNum = vert.size();
+			int indexNum = index.size();
+			file.write(reinterpret_cast<char*>(&vertexNum), sizeof(vertexNum));
+			file.write(reinterpret_cast<char*>(vert.data()), sizeof(Vertex)* vertexNum);
+			file.write(reinterpret_cast<char*>(&indexNum), sizeof(indexNum));
+			file.write(reinterpret_cast<char*>(index.data()), sizeof(std::uint16_t)* indexNum);
 		}
 	}
 }
@@ -640,13 +723,7 @@ void LoadVmdFile(const std::filesystem::path& path, std::unordered_map<std::stri
 	ExportMotion(path.string().substr(0,path.string().find_last_of(".")) + ".sani", motionData, vmdBoneNameTbl);
 }
 
-void ExportImage(tinygltf::Model& model)
-{
-	for (auto& img : model.images)
-	{
-		stbi_write_png((img.name + ".png").c_str(), img.width, img.height, img.component, img.image.data(), 0);
-	}
-}
+
 
 void LoadSkeltalGltf(const std::string& path)
 {
@@ -951,10 +1028,10 @@ int main(int argc, char* argv[])
 
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
-	LoadSkeltalGltf("ZombieA.gltf");
-
+	//LoadSkeltalGltf("ZombieA.gltf");
+	LoadGltf("Bullet.gltf");
 	//LoadSkeletalFbx("Swat.fbx");
-
+	//LoadTestGltf("water.gltf");
 	LoadMesh("Swat.mesh", meshList);
 	for (auto& mesh : meshList)
 	{
