@@ -1029,7 +1029,7 @@ int main(int argc, char* argv[])
 	std::vector<Mesh> meshList;
 	std::vector<Mesh> mlist;
 	//LoadSkeltalGltf("ZombieA.gltf");
-	LoadGltf("Stage.gltf");
+	LoadGltf("building.gltf");
 	//LoadSkeletalFbx("Swat.fbx");
 	//LoadTestGltf("water.gltf");
 	LoadMesh("Swat.mesh", meshList);
